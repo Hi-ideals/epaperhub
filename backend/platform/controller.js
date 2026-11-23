@@ -195,6 +195,7 @@ const clientCreate = asyncHandler(async (req, res) => {
   const t = await tenants.provision(b);
   await require('./credentials').remember(t.id, b.owner_email, b.admin_password);
   await log(req, 'client.created', t.id, { name: t.name, slug: t.slug, plan_id: t.plan_id });
+  if (t.domain) setImmediate(() => require('./domains').connect(t).catch(() => {}));
   const s = await platformSettings.getAll();
   const out = await clientOut(t, s.platform_url);
   if (b.send_welcome) {
@@ -222,6 +223,11 @@ const clientUpdate = asyncHandler(async (req, res) => {
   await log(req, 'client.updated', t.id, { name: b.name, plan_id: b.plan_id, status: b.status, expires_at: b.expires_at });
   const s = await platformSettings.getAll();
   if (b.slug !== t.slug || (b.domain || null) !== (t.domain || null)) await tenants.syncSiteUrl(await tenants.byId(t.id), s.platform_url);
+  if ((b.domain || null) !== (t.domain || null)) {
+    // Own domain changed: remove the old web-server site, set up the new one in the background
+    const domains = require('./domains'); const fresh = await tenants.byId(t.id);
+    setImmediate(async () => { if (t.domain) await domains.disconnect(t.id, t.domain).catch(() => {}); if (fresh.domain) await domains.connect(fresh).catch(() => {}); });
+  }
   ok(res, await clientOut(await tenants.byId(t.id), s.platform_url), 'Client saved');
 });
 
@@ -313,8 +319,46 @@ const clientDelete = asyncHandler(async (req, res) => {
   if (!t) throw ApiError.notFound('Client not found');
   if (String(req.body?.confirm || '').trim().toLowerCase() !== t.slug) throw ApiError.badRequest(`Type "${t.slug}" to confirm`);
   await tenants.destroy(t);
+  if (t.domain) setImmediate(() => require('./domains').disconnect(t.id, t.domain).catch(() => {}));
   await log(req, 'client.deleted', null, { name: t.name, slug: t.slug });
   ok(res, null, `${t.name} and all its data were deleted`);
+});
+
+/* ------------------------------ Storage optimizer ------------------------------ */
+const clientStorage = asyncHandler(async (req, res) => {
+  const t = await tenants.byId(req.params.id);
+  if (!t) throw ApiError.notFound('Client not found');
+  const opt = require('../services/storageOptimizer');
+  ok(res, await tenants.within(t, async () => ({ usage: opt.usage(), job: opt.status() })));
+});
+const clientStorageOptimize = asyncHandler(async (req, res) => {
+  const t = await tenants.byId(req.params.id);
+  if (!t) throw ApiError.notFound('Client not found');
+  const opt = require('../services/storageOptimizer');
+  const job = await tenants.within(t, async () => opt.start());
+  await log(req, 'client.storage_optimize', t.id, {});
+  ok(res, { job }, 'Optimizing storage… this can take a few minutes');
+});
+
+/* ------------------------------ Own domains ------------------------------ */
+const clientDomain = asyncHandler(async (req, res) => {
+  const t = await tenants.byId(req.params.id);
+  if (!t) throw ApiError.notFound('Client not found');
+  const domains = require('./domains');
+  ok(res, { ...(await domains.status(t)), server: await domains.serverStatus() });
+});
+const clientDomainCheck = asyncHandler(async (req, res) => {
+  const t = await tenants.byId(req.params.id);
+  if (!t) throw ApiError.notFound('Client not found');
+  if (!t.domain) throw ApiError.badRequest('This client has no own domain. Add one in Edit client first.');
+  const domains = require('./domains');
+  const st = await domains.connect(t, { force: !!req.body?.force });
+  await log(req, 'client.domain_check', t.id, { domain: t.domain, status: st.status });
+  ok(res, { ...st, server: await domains.serverStatus() }, st.status === 'live' ? `${t.domain} is live` : st.message || 'Checked');
+});
+const domainSetup = asyncHandler(async (req, res) => {
+  const domains = require('./domains');
+  ok(res, { server: await domains.serverStatus(), server_ips: await domains.serverIps() });
 });
 
 /* ------------------------------ Platform settings ------------------------------ */
@@ -331,6 +375,8 @@ const settingsSave = asyncHandler(async (req, res) => {
     smtp_host: optStr(191), smtp_port: z.coerce.number().int().min(1).max(65535).default(587), smtp_secure: z.coerce.boolean().default(false),
     smtp_user: optStr(191), smtp_pass: z.string().max(255).optional().nullable(),
     mail_from_name: str(120).optional(), mail_from_email: z.union([email, z.literal('')]).optional(),
+    server_ip: z.string().trim().max(120).regex(/^[\d.,\s]*$/, 'IPv4 addresses separated by commas, e.g. 216.48.177.81').optional(),
+    ssl_email: z.union([email, z.literal('')]).optional(),
   }), req.body);
   const before = (await platformSettings.getAll()).platform_url;
   await platformSettings.update(b);
@@ -392,6 +438,6 @@ const directory = asyncHandler(async (req, res) => {
 
 module.exports = {
   login, me, updateMe, dashboard, plansList, planSave, planDelete,
-  clientsList, clientGet, clientCreate, clientUpdate, clientStatus, clientRenew, clientResetPassword, clientImpersonate, clientDelete,
+  clientsList, clientGet, clientCreate, clientUpdate, clientStatus, clientRenew, clientResetPassword, clientImpersonate, clientDelete, clientDomain, clientDomainCheck, domainSetup, clientStorage, clientStorageOptimize,
   settingsGet, settingsSave, testEmail, adminsList, adminSave, adminDelete, activity, directory,
 };

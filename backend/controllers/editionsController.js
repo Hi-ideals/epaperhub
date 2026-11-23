@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { query, one, transaction } = require('../config/db');
 const { ApiError, ok, created, asyncHandler, paginate, pageMeta } = require('../utils/http');
-const { slugify, fileUrl, cleanText, todayISO } = require('../utils/helpers');
+const { slugify, fileUrl, sizedUrl, cleanText, todayISO } = require('../utils/helpers');
 const { audit } = require('../services/audit');
 const cache = require('../services/cache');
 const images = require('../services/images');
@@ -242,10 +242,10 @@ const bulk = asyncHandler(async (req, res) => {
 const publicSelect = `SELECT e.id, e.title, e.slug, e.edition_date, e.description, e.cover_image, e.published_at, e.category_id, e.region_id,
   e.comments_enabled, e.allow_download, e.allow_print, e.view_count, c.name AS category_name, c.slug AS category_slug, r.name AS region_name,
   (SELECT COUNT(*) FROM edition_pages p WHERE p.edition_id=e.id AND p.is_visible=1) AS page_count,
-  (SELECT pi.path FROM edition_pages p JOIN page_images pi ON pi.page_id=p.id AND pi.variant='thumb' WHERE p.edition_id=e.id AND p.is_visible=1 ORDER BY p.page_number LIMIT 1) AS thumb_path
+  (SELECT pi.path FROM edition_pages p JOIN page_images pi ON pi.page_id=p.id AND pi.variant IN ('thumb','large') WHERE p.edition_id=e.id AND p.is_visible=1 ORDER BY p.page_number, FIELD(pi.variant,'thumb','large') LIMIT 1) AS thumb_path
   FROM editions e JOIN edition_categories c ON c.id=e.category_id AND c.status='active' AND c.deleted_at IS NULL LEFT JOIN regions r ON r.id=e.region_id`;
 
-const pub = (e) => ({ ...serializeEdition(e), thumb_url: fileUrl(e.thumb_path) || fileUrl(e.cover_image), thumb_path: undefined, cover_image: undefined });
+const pub = (e) => ({ ...serializeEdition(e), thumb_url: sizedUrl(e.thumb_path, 360) || sizedUrl(e.cover_image, 360), thumb_path: undefined, cover_image: undefined });
 
 function publicFilters(q) {
   const w = [PUBLIC_WHERE, 'EXISTS (SELECT 1 FROM edition_pages p WHERE p.edition_id=e.id AND p.is_visible=1)']; const p = [];

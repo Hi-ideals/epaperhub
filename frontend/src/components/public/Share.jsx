@@ -102,6 +102,26 @@ const loadImg = (src) => new Promise((resolve, reject) => {
   im.src = src;
 });
 
+/** Area of an image without its empty (transparent or white) border. */
+function trimImage(img) {
+  const w = img.naturalWidth; const h = img.naturalHeight;
+  const full = { img, sx: 0, sy: 0, sw: w, sh: h };
+  try {
+    const k = Math.min(1, 600 / Math.max(w, h)); // scan a small copy
+    const cw = Math.max(1, Math.round(w * k)); const ch = Math.max(1, Math.round(h * k));
+    const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+    const cx = cv.getContext('2d'); cx.drawImage(img, 0, 0, cw, ch);
+    const d = cx.getImageData(0, 0, cw, ch).data;
+    let x0 = cw; let y0 = ch; let x1 = -1; let y1 = -1;
+    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+      const i = (y * cw + x) * 4;
+      if (d[i + 3] > 16 && !(d[i] > 243 && d[i + 1] > 243 && d[i + 2] > 243)) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    }
+    if (x1 < 0) return full;
+    return { img, sx: x0 / k, sy: y0 / k, sw: (x1 - x0 + 1) / k, sh: (y1 - y0 + 1) / k };
+  } catch { return full; } // e.g. image from another site that can't be read
+}
+
 /** "November 5, 2026" from 'YYYY-MM-DD' */
 export function longEditionDate(d) {
   const [y, m, day] = String(d).split('-').map(Number);
@@ -111,46 +131,40 @@ export const siteDomain = (site) => { try { return new URL(site.site_url || wind
 
 /**
  * Cut the selected article out of the page and add a branded header:
- * logo on the left; date and "Page no:N | website" on the right.
+ * big logo in the centre; small date on the left; small "Page no:N | website" on the right.
  */
 export async function buildBrandedClip({ page, selection, edition, site }) {
   const im = await loadImg(mediaUrl(page.images.large?.url || page.images.medium?.url));
   const sx = selection.x * im.naturalWidth; const sy = selection.y * im.naturalHeight;
   const cw = Math.max(1, Math.round(selection.w * im.naturalWidth)); const ch = Math.max(1, Math.round(selection.h * im.naturalHeight));
-  // Keep the header readable even for narrow clips
+  // Header: logo across ~80% of the width; a thin row below it with the date (left) and page + website (right)
   const W = Math.max(cw, 720);
-  const H = Math.round(Math.min(170, Math.max(96, W * 0.1)));
-  const pad = Math.round(H * 0.18);
+  const pad = Math.round(W * 0.02);
+  const fs = Math.round(Math.min(15, Math.max(11, W * 0.0105)));
+  const logoSrc = site.header_logo || site.site_logo;
+  let logo = null;
+  if (logoSrc) { try { logo = trimImage(await loadImg(mediaUrl(logoSrc))); } catch { /* text instead */ } }
+  let lw = W * 0.8; let lh = logo ? lw * (logo.sh / logo.sw) : W * 0.09;
+  const maxLh = W * 0.26;
+  if (lh > maxLh) { lw *= maxLh / lh; lh = maxLh; }
+  const H = Math.round(pad + lh + pad * 0.6 + fs + pad * 0.8);
   const c = document.createElement('canvas');
   c.width = W; c.height = H + ch;
   const g = c.getContext('2d');
-  g.fillStyle = '#ffffff'; g.fillRect(0, 0, c.width, c.height);
-  // Logo (or site name)
-  const logoSrc = site.header_logo || site.site_logo;
-  let logoRight = pad;
-  if (logoSrc) {
-    try {
-      const logo = await loadImg(mediaUrl(logoSrc));
-      const maxH = H - pad * 2; const maxW = W * 0.48;
-      const k = Math.min(maxH / logo.naturalHeight, maxW / logo.naturalWidth);
-      const lw = logo.naturalWidth * k; const lh = logo.naturalHeight * k;
-      g.drawImage(logo, pad, (H - lh) / 2, lw, lh);
-      logoRight = pad + lw;
-    } catch { /* fall back to text below */ }
-  }
-  if (logoRight === pad) {
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H + ch);
+  if (logo) g.drawImage(logo.img, logo.sx, logo.sy, logo.sw, logo.sh, (W - lw) / 2, pad, lw, lh);
+  else {
     g.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--ep-primary').trim() || '#c8102e';
-    g.font = `900 ${Math.round(H * 0.42)}px Georgia, "Noto Serif", serif`;
-    g.textBaseline = 'middle';
-    g.fillText(site.site_name || 'ePaper', pad, H / 2);
+    let size = Math.round(lh * 0.9);
+    g.font = `900 ${size}px Georgia, "Noto Serif", serif`;
+    while (size > 14 && g.measureText(site.site_name || 'ePaper').width > W * 0.8) { size -= 2; g.font = `900 ${size}px Georgia, "Noto Serif", serif`; }
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(site.site_name || 'ePaper', W / 2, pad + lh / 2);
   }
-  // Right side: date + page + website
-  const pageNo = page.position || page.page_number;
-  g.fillStyle = '#1f2937'; g.textAlign = 'right'; g.textBaseline = 'alphabetic';
-  g.font = `500 ${Math.round(H * 0.24)}px "Noto Sans", Arial, sans-serif`;
-  g.fillText(longEditionDate(edition.edition_date), W - pad, H * 0.44);
-  g.font = `500 ${Math.round(H * 0.22)}px "Noto Sans", Arial, sans-serif`;
-  g.fillText(`Page no:${pageNo} | ${siteDomain(site)}`, W - pad, H * 0.78);
+  // Small date + page/website row
+  const rowY = pad + lh + pad * 0.6 + fs / 2;
+  g.font = `500 ${fs}px "Noto Sans", Arial, sans-serif`; g.fillStyle = '#6b7280'; g.textBaseline = 'middle';
+  g.textAlign = 'left'; g.fillText(longEditionDate(edition.edition_date), pad, rowY);
+  g.textAlign = 'right'; g.fillText(`Page no:${page.position || page.page_number} | ${siteDomain(site)}`, W - pad, rowY);
   // Divider + article
   g.fillStyle = '#d1d5db'; g.fillRect(0, H - 2, W, 2);
   g.drawImage(im, sx, sy, cw, ch, Math.round((W - cw) / 2), H, cw, ch);

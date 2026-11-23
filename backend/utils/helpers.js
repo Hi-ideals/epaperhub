@@ -73,4 +73,10 @@ function todayISO(tz) {
   } catch { return new Date().toISOString().slice(0, 10); }
 }
 
-module.exports = { slugify, randomToken, sha256, randomCode, encrypt, decrypt, cleanText, cleanRichHtml, fileUrl, toBool, clientIp, todayISO };
+/** URL of a page image at a smaller width. Only "-large.webp" page files are resized (on the fly, see server.js). */
+const sizedUrl = (rel, w) => {
+  const u = fileUrl(rel);
+  return u && w && /-large\.webp$/.test(u) ? `${u}?w=${w}` : u;
+};
+
+module.exports = { sizedUrl, slugify, randomToken, sha256, randomCode, encrypt, decrypt, cleanText, cleanRichHtml, fileUrl, toBool, clientIp, todayISO };

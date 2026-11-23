@@ -62,9 +62,13 @@ async function tick() {
 function startScheduler() {
   cron.schedule('* * * * *', tick);
   cron.schedule('17 9 * * *', () => sendExpiryReminders().catch((e) => console.error('[platform]', e.message))); // daily 9:17
+  // Own domains: retry ones waiting for DNS / SSL every 10 minutes, re-check live ones daily
+  // Nightly 3:41: remove leftover files and compress new originals for every newspaper (no quality loss)
+  cron.schedule('41 3 * * *', () => forEachActiveClient('storage', async () => { const j = require('../services/storageOptimizer').start(); while (j.running) await new Promise((r) => setTimeout(r, 2000)); }).catch((e) => console.error('[storage]', e.message)));
+  cron.schedule('*/10 * * * *', () => require('../platform/domains').autoCheck().catch((e) => console.error('[domains]', e.message)));
   setTimeout(tick, 3000);
   setTimeout(() => sendExpiryReminders().catch(() => {}), 15000);
-  console.log('✓ Scheduler started (publishing, backups, plan reminders)');
+  console.log('✓ Scheduler started (publishing, backups, plan reminders, own domains)');
 }
 
 module.exports = { startScheduler, runDueSchedules };

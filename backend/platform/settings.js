@@ -11,6 +11,8 @@ const DEFS = {
   home_tenant_id: { def: 0, type: 'number' }, // newspaper shown on the platform's own home page (0 = list of newspapers)
   unavailable_message: { def: 'This newspaper is temporarily unavailable. Please check back soon.' },
   reminder_days: { def: '7,3,1' },
+  server_ip: { def: '' },   // public IP(s) client domains must point to (A record); empty = IP of the platform domain
+  ssl_email: { def: '' },   // Let's Encrypt account email for automatic SSL (empty = support email)
   smtp_host: { def: config.smtp.host || '' },
   smtp_port: { def: config.smtp.port || 587, type: 'number' },
   smtp_secure: { def: !!config.smtp.secure, type: 'bool' },

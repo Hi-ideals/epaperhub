@@ -7,6 +7,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useFetch } from '../../hooks';
 import { post, del, mediaUrl } from '../../services/api';
 import { formatDate, formatDateTime } from '../../utils/format';
+import { appHref } from '../../services/tenant';
 
 export const STATUSES = ['draft', 'scheduled', 'published', 'unpublished', 'archived'];
 
@@ -17,7 +18,7 @@ export function EditionActions({ e, onDone }) {
   const act = (action, opts = {}) => runAction(() => post(`/editions/${e.id}/actions/${action}`), { ...opts, onDone });
   const items = [
     can('editions.view') && { icon: 'eye', label: 'View details', fn: () => navigate(`/admin/editions/${e.id}`) },
-    e.status === 'published' && { icon: 'box-arrow-up-right', label: 'Preview on website', fn: () => window.open(`/edition/${e.slug}`, '_blank') },
+    e.status === 'published' && { icon: 'box-arrow-up-right', label: 'Preview on website', fn: () => window.open(appHref(`/edition/${e.slug}`), '_blank') },
     e.status !== 'published' && can('editions.view') && { icon: 'display', label: 'Preview', fn: () => navigate(`/admin/editions/${e.id}?preview=1`) },
     can('editions.edit') && { icon: 'pencil', label: 'Edit', fn: () => navigate(`/admin/editions/${e.id}/edit`) },
     can('pages.add') && { icon: 'images', label: 'Manage pages', fn: () => navigate(`/admin/editions/${e.id}#pages`) },

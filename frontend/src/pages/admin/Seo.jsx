@@ -1,3 +1,4 @@
+import { BASENAME } from '../../services/tenant';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -68,8 +69,8 @@ function GlobalSeo() {
         <Panel title="XML sitemap">
           <p className="small text-muted">Includes the homepage, published editions and their pages, categories and CMS pages. It updates automatically every 10 minutes.</p>
           <div className="d-flex gap-2 flex-wrap">
-            <a href={`${API_ORIGIN}/sitemap.xml`} target="_blank" rel="noreferrer" className="btn btn-sm btn-light border"><i className="bi bi-filetype-xml me-1" />View sitemap.xml</a>
-            <a href={`${API_ORIGIN}/robots.txt`} target="_blank" rel="noreferrer" className="btn btn-sm btn-light border">View robots.txt</a>
+            <a href={`${API_ORIGIN}${BASENAME}/sitemap.xml`} target="_blank" rel="noreferrer" className="btn btn-sm btn-light border"><i className="bi bi-filetype-xml me-1" />View sitemap.xml</a>
+            <a href={`${API_ORIGIN}${BASENAME}/robots.txt`} target="_blank" rel="noreferrer" className="btn btn-sm btn-light border">View robots.txt</a>
             {can('seo.manage') && <button className="btn btn-sm btn-outline-primary" onClick={() => runAction(() => post('/seo/sitemap/regenerate'))}><i className="bi bi-arrow-repeat me-1" />Regenerate now</button>}
           </div>
         </Panel>

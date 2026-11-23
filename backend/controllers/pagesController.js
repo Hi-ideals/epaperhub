@@ -19,9 +19,11 @@ async function getEdition(id) {
 }
 
 /** Process one image file into a page row (new or replacing). */
-async function storePageImage(conn, editionId, filePath, originalName, { pageId = null, pageNumber = null } = {}) {
-  const orig = await images.saveOriginal(filePath, editionId, originalName);
-  const variants = await images.buildVariants(images.absOriginal(orig.path), editionId);
+async function storePageImage(conn, editionId, filePath, originalName, { pageId = null, pageNumber = null, pdfPage = null } = {}) {
+  // PDF pages: keep the small vector page as the original; build web images from its render
+  const orig = pdfPage ? await images.saveOriginalPdf(pdfPage, editionId, filePath) : await images.saveOriginal(filePath, editionId, originalName);
+  const variants = await images.buildVariants(pdfPage ? filePath : images.absOriginal(orig.path), editionId, null, { fromPdf: !!pdfPage });
+  if (variants.large) require('../services/pageSizes').warm(images.absUpload(variants.large.path));
   let id = pageId;
   if (!id) {
     const [r] = await conn.query('INSERT INTO edition_pages (edition_id, page_number, title, original_name, width, height) VALUES (?,?,?,?,?,?)',
@@ -63,7 +65,8 @@ const upload = asyncHandler(async (req, res) => {
         if (!s.allow_pdf_upload) throw ApiError.badRequest('PDF upload is disabled in ePaper settings.');
         const pngs = await images.pdfToImages(f.path);
         tmpExtra.push(...pngs);
-        pngs.forEach((p, i) => queue.push({ path: p, name: `${path.basename(f.originalname, '.pdf')}-p${i + 1}.png` }));
+        const parts = await images.splitPdf(f.path).catch(() => []);
+        pngs.forEach((p, i) => queue.push({ path: p, name: `${path.basename(f.originalname, '.pdf')}-p${i + 1}.${parts[i] ? 'pdf' : 'png'}`, pdfPage: parts[i] || null }));
       } else {
         await images.assertImage(f.path);
         queue.push({ path: f.path, name: f.originalname });
@@ -76,7 +79,7 @@ const upload = asyncHandler(async (req, res) => {
       const conn = await pool.getConnection();
       try {
         await conn.beginTransaction();
-        const id = await storePageImage(conn, ed.id, item.path, item.name, { pageNumber: ++n });
+        const id = await storePageImage(conn, ed.id, item.path, item.name, { pageNumber: ++n, pdfPage: item.pdfPage });
         await conn.commit();
         created.push(id);
       } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
@@ -97,13 +100,14 @@ const replace = asyncHandler(async (req, res) => {
     const page = await one('SELECT * FROM edition_pages WHERE id=?', [req.params.pageId]);
     if (!page) throw ApiError.notFound('Page not found');
     if (!req.file) throw ApiError.badRequest('Select an image to replace this page');
-    let src = req.file.path;
+    let src = req.file.path; let pdfPage = null;
     if (req.file.mimetype === 'application/pdf') {
       const pngs = await images.pdfToImages(req.file.path);
       tmpExtra.push(...pngs);
       src = pngs[0];
+      pdfPage = (await images.splitPdf(req.file.path).catch(() => []))[0] || null;
     }
-    await transaction((conn) => storePageImage(conn, page.edition_id, src, req.file.originalname, { pageId: page.id }));
+    await transaction((conn) => storePageImage(conn, page.edition_id, src, req.file.originalname, { pageId: page.id, pdfPage }));
     await audit(req, 'page.replaced', 'page', page.id, { edition_id: page.edition_id });
     cache.invalidate('public:');
     ok(res, await pagesWithImages(page.edition_id), 'Page replaced successfully');
@@ -172,12 +176,17 @@ async function regenerate(editionId, quality) {
     const abs = images.absOriginal(p.path);
     if (!fs.existsSync(abs)) continue;
     const old = await query("SELECT path FROM page_images WHERE page_id=? AND variant<>'original'", [p.id]);
-    const v = await images.buildVariants(abs, p.edition_id, wm, quality);
+    const srcImg = await images.renderSource(abs);
+    let v;
+    try { v = await images.buildVariants(srcImg.file, p.edition_id, wm, { fromPdf: srcImg.fromPdf }); } finally { srcImg.cleanup(); }
     for (const [variant, x] of Object.entries(v)) {
       await query(`INSERT INTO page_images (page_id, variant, path, mime, width, height, size_bytes, is_watermarked) VALUES (?,?,?,?,?,?,?,?)
         ON DUPLICATE KEY UPDATE path=VALUES(path), mime=VALUES(mime), width=VALUES(width), height=VALUES(height), size_bytes=VALUES(size_bytes), is_watermarked=VALUES(is_watermarked)`,
       [p.id, variant, x.path, x.mime, x.width, x.height, x.size_bytes, x.is_watermarked]);
     }
+    // variants no longer made (e.g. xlarge for a small page) are removed
+    const kept = Object.keys(v);
+    await query(`DELETE FROM page_images WHERE page_id=? AND variant<>'original' AND variant NOT IN (${kept.map(() => '?').join(',')})`, [p.id, ...kept]);
     old.forEach((o) => images.safeUnlink(images.absUpload(o.path)));
     done++;
   }
@@ -203,7 +212,7 @@ const validateEdition = asyncHandler(async (req, res) => {
   const origMap = Object.fromEntries(origs.map((o) => [o.page_id, o.path]));
   const ratios = [];
   for (const p of pages) {
-    for (const v of ['large', 'medium', 'thumb']) {
+    for (const v of ['large']) {
       if (!p.images[v]) issues.push(`Page ${p.page_number}: missing ${v} image.`);
       else if (!fs.existsSync(images.absUpload(p.images[v].url.replace(/^\/uploads\/(c\d+\/)?/, '')))) issues.push(`Page ${p.page_number}: ${v} image file is missing on disk.`);
     }
@@ -239,4 +248,18 @@ const publicDownload = asyncHandler(async (req, res) => {
   res.send(buf);
 });
 
-module.exports = { list, upload, replace, update, remove, reorder, setFirst, regenerate, regenerateHandler, validateEdition, downloadOriginal, publicDownload, fileUrl };
+/** The page's own PDF (vector) so readers can zoom with perfectly sharp text. */
+const pagePdf = asyncHandler(async (req, res) => {
+  const row = await one(`SELECT pi.path, pi.mime, p.is_visible, e.status, e.is_active, e.deleted_at FROM edition_pages p JOIN editions e ON e.id=p.edition_id
+    JOIN page_images pi ON pi.page_id=p.id AND pi.variant='original' WHERE p.id=?`, [req.params.pageId]);
+  const isPublic = row && row.is_visible && row.status === 'published' && row.is_active && !row.deleted_at;
+  if (!row || row.mime !== 'application/pdf' || !(isPublic || req.user?.is_admin)) throw ApiError.notFound('Page not found');
+  const abs = images.absOriginal(row.path);
+  if (!fs.existsSync(abs)) throw ApiError.notFound('Page not found');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'inline');
+  res.setHeader('Cache-Control', isPublic ? 'public, max-age=86400' : 'private, no-store');
+  fs.createReadStream(abs).pipe(res);
+});
+
+module.exports = { pagePdf, list, upload, replace, update, remove, reorder, setFirst, regenerate, regenerateHandler, validateEdition, downloadOriginal, publicDownload, fileUrl };

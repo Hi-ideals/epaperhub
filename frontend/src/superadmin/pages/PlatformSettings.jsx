@@ -66,6 +66,13 @@ export default function PlatformSettings({ tab }) {
               <Field label="Support email" error={errors.support_email}><input type="email" className="form-control" value={v.support_email} onChange={(e) => set('support_email', e.target.value)} /></Field>
               <Field label="Support phone" error={errors.support_phone} className="mb-0"><input className="form-control" value={v.support_phone || ''} onChange={(e) => set('support_phone', e.target.value)} /></Field>
             </Panel>
+            <Panel title={<><i className="bi bi-globe-americas me-2" />Own domains (automatic setup)</>} className="mt-4">
+              <DomainSetupStatus />
+              <Field label="Server IP" error={errors.server_ip} help="The public IP of this server. Clients add an A record pointing their domain here. Several IPs: separate with commas.">
+                <input className="form-control" value={v.server_ip || ''} onChange={(e) => set('server_ip', e.target.value)} placeholder="e.g. 216.48.177.81" /></Field>
+              <Field label="SSL email (Let's Encrypt)" error={errors.ssl_email} className="mb-0" help="Receives certificate expiry notices. Empty = support email.">
+                <input type="email" className="form-control" value={v.ssl_email || ''} onChange={(e) => set('ssl_email', e.target.value)} placeholder={v.support_email || 'ops@yourcompany.com'} /></Field>
+            </Panel>
           </div>
         </div>
       </>) : (<>
@@ -110,5 +117,21 @@ export default function PlatformSettings({ tab }) {
       </>)}
       <div className="sa-savebar"><button className="btn btn-primary px-4" disabled={busy}>{busy && <span className="spinner-border spinner-border-sm me-2" />}Save settings</button></div>
     </form>
+  );
+}
+
+/** Is the server helper for automatic own domains installed? */
+function DomainSetupStatus() {
+  const [st, setSt] = useState(null);
+  useEffect(() => { pget('/domain-setup').then((r) => setSt(r.data)).catch(() => setSt({ server: { ready: false, message: 'Could not check' } })); }, []);
+  if (!st) return <div className="small text-muted mb-3"><span className="spinner-border spinner-border-sm me-1" />Checking server…</div>;
+  const ok = st.server.ready;
+  return (
+    <div className={`dom-msg ${ok ? 'ok' : 'warn'} mb-3`}>
+      <i className={`bi bi-${ok ? 'check-circle-fill' : 'tools'} me-1`} />
+      <b>{ok ? 'Automatic setup is ready' : 'Automatic setup is not ready'}</b> — {st.server.message}
+      {!ok && <div className="mt-1">One-time server setup: see <code>deploy/README-domains.md</code> in the project.</div>}
+      {ok && <div className="mt-1">Saving a client's own domain creates its website and free SSL automatically.</div>}
+    </div>
   );
 }

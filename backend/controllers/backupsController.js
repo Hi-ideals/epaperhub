@@ -52,6 +52,17 @@ const remove = asyncHandler(async (req, res) => {
   ok(res, null, 'Backup deleted');
 });
 
+/* ---- Storage: what uses space, and the optimizer ---- */
+const optimizer = require('../services/storageOptimizer');
+const storage = asyncHandler(async (req, res) => {
+  ok(res, { usage: optimizer.usage(), job: optimizer.status() });
+});
+const optimize = asyncHandler(async (req, res) => {
+  const job = optimizer.start({ compress: req.body?.compress !== false, clean: req.body?.clean !== false });
+  await audit(req, 'storage.optimize', 'settings', 0, {});
+  ok(res, { job, usage: optimizer.usage() }, 'Optimizing storage… this can take a few minutes');
+});
+
 const updateSettings = asyncHandler(async (req, res) => {
   const b = req.body || {};
   const errors = {};
@@ -59,11 +70,12 @@ const updateSettings = asyncHandler(async (req, res) => {
   if (b.time !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(b.time))) errors.time = 'Use HH:mm (24-hour)';
   if (b.weekday !== undefined && !(Number(b.weekday) >= 0 && Number(b.weekday) <= 6)) errors.weekday = 'Invalid weekday';
   if (b.month_day !== undefined && !(Number(b.month_day) >= 1 && Number(b.month_day) <= 31)) errors.month_day = 'Day must be 1–31';
+  if (b.media_every !== undefined && !['every', 'weekly', 'monthly', 'never'].includes(b.media_every)) errors.media_every = 'Choose how often images are included';
   if (b.keep_count !== undefined && !(Number(b.keep_count) >= 1 && Number(b.keep_count) <= 365)) errors.keep_count = 'Keep between 1 and 365 backups';
   if (Object.keys(errors).length) throw ApiError.badRequest('Please fix the highlighted fields', errors);
   const prev = await settings.getGroup('backup_settings');
   const values = {};
-  for (const k of ['auto_enabled', 'frequency', 'time', 'weekday', 'month_day', 'include_media', 'keep_count']) if (b[k] !== undefined) values[k] = b[k];
+  for (const k of ['auto_enabled', 'frequency', 'time', 'weekday', 'month_day', 'include_media', 'media_every', 'keep_count']) if (b[k] !== undefined) values[k] = b[k];
   // Start counting from now when the schedule is switched on or changed, so it doesn't fire for a slot already in the past
   const turnedOn = (values.auto_enabled === true || values.auto_enabled === 'true') && !prev.auto_enabled;
   const changed = ['frequency', 'time', 'weekday', 'month_day'].some((k) => values[k] !== undefined && String(values[k]) !== String(prev[k]));
@@ -73,4 +85,4 @@ const updateSettings = asyncHandler(async (req, res) => {
   ok(res, await settingsPayload(), 'Backup settings saved');
 });
 
-module.exports = { list, create, download, remove, updateSettings };
+module.exports = { storage, optimize, list, create, download, remove, updateSettings };

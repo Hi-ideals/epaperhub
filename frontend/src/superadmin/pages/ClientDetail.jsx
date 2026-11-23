@@ -8,6 +8,9 @@ import { formatDateTime, timeAgo } from '../../utils/format';
 import { ppost } from '../../services/api';
 import { usePFetch, ClientStatus, fmtDate, money, mbText, daysLeft, siteHref, sitePath } from '../shared';
 import { loginAsClient, toggleClient } from './Clients';
+import DomainPanel from '../DomainPanel';
+import StoragePanel from '../../components/admin/StoragePanel';
+import { pget } from '../../services/api';
 
 async function copy(text, what = 'Copied') {
   try { await navigator.clipboard.writeText(text); toast.success(what); } catch { toast.error('Could not copy'); }
@@ -81,6 +84,8 @@ export default function ClientDetail() {
               {(c.storage_mb !== null || c.max_admin_users !== null || c.max_editions_per_month !== null) && <span className="sa-pill warn ms-2">Custom limits</span>}</div>
           </Panel>
 
+          <StoragePanel className="mt-4" load={() => pget(`/clients/${c.id}/storage`).then((r) => r.data)} run={() => ppost(`/clients/${c.id}/storage/optimize`, {})} />
+
           <Panel title={<><i className="bi bi-grid-3x3-gap me-2" />Modules</>} className="mt-4" actions={Array.isArray(c.modules) ? <span className="sa-pill warn">Custom for this client</span> : <span className="small text-muted">From the plan</span>}>
             <div className="plan-features">
               {features.map((f) => <span key={f.key} className={c.features.includes(f.key) ? 'on' : 'off'}><i className={`bi bi-${c.features.includes(f.key) ? 'check-circle-fill' : 'x-circle'}`} />{f.label}</span>)}
@@ -119,6 +124,7 @@ export default function ClientDetail() {
             <div className="sa-kv"><span>Own domain</span>{c.domain ? <a href={`${c.site_url}`} target="_blank" rel="noreferrer">{c.domain}</a> : <span className="text-muted">Not set</span>}</div>
             <div className="sa-kv"><span>Admin panel</span><span className="text-break small">{siteHref(c).replace(/^https?:\/\//, '')}/admin</span></div>
           </Panel>
+          <DomainPanel client={c} />
           <Panel title={<><i className="bi bi-person-badge me-2" />Owner</>} className="mt-4">
             <div className="sa-kv"><span>Name</span><b>{c.owner_name || '—'}</b></div>
             <div className="sa-kv"><span>Email</span><a href={`mailto:${c.owner_email}`}>{c.owner_email}</a></div>

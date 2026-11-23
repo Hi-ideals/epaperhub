@@ -6,7 +6,7 @@ import { Spinner, ErrorState, StatusBadge } from '../../components/common';
 import { EditionActions } from './Editions';
 import { useFetch } from '../../hooks';
 import { useAuth } from '../../context/AuthContext';
-import { put, mediaUrl } from '../../services/api';
+import { put, post, mediaUrl } from '../../services/api';
 import { formatDate, formatDateTime } from '../../utils/format';
 import { appHref } from '../../services/tenant';
 
@@ -26,6 +26,9 @@ export default function EditionDetail() {
         actions={<>
           {e.status === 'published' && <a href={appHref(`/edition/${e.slug}`)} target="_blank" rel="noreferrer" className="btn btn-light border"><i className="bi bi-box-arrow-up-right me-1" />View on website</a>}
           {can('editions.edit') && <Link to={`/admin/editions/${e.id}/edit`} className="btn btn-light border"><i className="bi bi-pencil me-1" />Edit</Link>}
+          {can('pages.edit') && e.pages.length > 0 && <button className="btn btn-light border" title="Re-create the page images readers see from the original uploads, in the sharpest quality"
+            onClick={() => runAction(() => post('/pages/regenerate', { edition_id: e.id }), { confirmText: `Rebuild the ${e.pages.length} page image(s) of this edition in HD quality? Text becomes sharper when readers zoom in. Takes a few seconds per page.`, variant: 'primary', button: 'Rebuild in HD', onDone: () => reload() })}>
+            <i className="bi bi-badge-hd me-1" />Sharpen pages</button>}
           {can('pages.view', 'pages.edit') && e.pages.length > 0 && <Link to={`/admin/editions/${e.id}/areas`} className="btn btn-light border"><i className="bi bi-bounding-box-circles me-1" />Area Mapping</Link>}
           {e.status !== 'published' && can('editions.publish') && <Link to={`/admin/publish/${e.id}`} className="btn btn-primary"><i className="bi bi-send me-1" />Publish workflow</Link>}
           <EditionActions e={e} onDone={(r) => (r?.data?.id && r.data.id !== e.id ? window.location.assign(appHref(`/admin/editions/${r.data.id}`)) : reload())} />

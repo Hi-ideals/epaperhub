@@ -177,7 +177,7 @@ CREATE TABLE IF NOT EXISTS edition_pages (
 CREATE TABLE IF NOT EXISTS page_images (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   page_id INT UNSIGNED NOT NULL,
-  variant ENUM('original','large','medium','thumb') NOT NULL,
+  variant ENUM('original','xlarge','large','medium','thumb') NOT NULL,
   path VARCHAR(500) NOT NULL,
   mime VARCHAR(60) NOT NULL,
   width INT UNSIGNED NULL,

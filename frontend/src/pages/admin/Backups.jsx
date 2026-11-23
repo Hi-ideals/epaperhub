@@ -6,6 +6,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useFetch } from '../../hooks';
 import { post, put, del, download } from '../../services/api';
 import { formatDateTime } from '../../utils/format';
+import { get } from '../../services/api';
+import StoragePanel from '../../components/admin/StoragePanel';
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const TYPE_STYLE = {
@@ -65,7 +67,7 @@ export default function Backups() {
       const r = await put('/backups/settings', {
         auto_enabled: !!form.auto_enabled, frequency: form.frequency, time: form.time,
         weekday: Number(form.weekday), month_day: Number(form.month_day),
-        include_media: !!form.include_media, keep_count: Number(form.keep_count),
+        include_media: form.media_every !== 'never', media_every: form.media_every || 'weekly', keep_count: Number(form.keep_count),
       });
       toast.success(r.message); setForm(r.data); reload(true);
     } catch (e) { setErrors(e.errors || {}); toast.error(e.message); }
@@ -137,7 +139,13 @@ export default function Backups() {
                   <div className="col-sm-4"><Field label="Keep last" error={errors.keep_count} className="mb-0" help="Older automatic backups are deleted">
                     <div className="input-group"><input type="number" min="1" max="365" className="form-control" value={form.keep_count} onChange={(e) => set('keep_count', e.target.value)} /><span className="input-group-text">backups</span></div></Field></div>
                 </div>
-                <div className="mt-3"><Switch label="Include images & uploaded files" checked={form.include_media} onChange={(v) => set('include_media', v)} help="Turn off to back up only the database (much smaller file)." /></div>
+                <div className="row g-3 mt-1"><div className="col-sm-8"><Field label="Include page images" error={errors.media_every} className="mb-0" help="The database is in every backup. Images are big and rarely change, so including them once a week saves a lot of space.">
+                  <select className="form-select" value={form.include_media === false ? 'never' : (form.media_every || 'weekly')} onChange={(e) => setForm((f) => ({ ...f, media_every: e.target.value, include_media: e.target.value !== 'never' }))}>
+                    <option value="weekly">Once a week (recommended)</option>
+                    <option value="monthly">Once a month</option>
+                    <option value="every">In every backup (uses the most space)</option>
+                    <option value="never">Never (database only)</option>
+                  </select></Field></div></div>
               </fieldset>
               <div className="bk-summary mt-3"><i className="bi bi-info-circle" /><span>{scheduleText(form)}{form.frequency === 'monthly' && Number(form.month_day) > 28 && form.auto_enabled ? ' (last day in shorter months)' : ''}. Uses this server's clock.</span></div>
               {manage && <div className="mt-3"><button className="btn btn-primary" disabled={saving} onClick={saveSettings}>{saving && <span className="spinner-border spinner-border-sm me-2" />}Save schedule</button></div>}
@@ -161,6 +169,10 @@ export default function Backups() {
           </Panel>
         </div>
       </div>
+
+      <div className="row g-4 mb-4"><div className="col-lg-7">
+        <StoragePanel load={() => get('/backups/storage').then((r) => r.data)} run={() => post('/backups/storage/optimize', {})} canRun={manage} />
+      </div></div>
 
       <Panel title={<><i className="bi bi-clock-history me-2" />Backup history</>} bodyClass="">
         <DataTable columns={cols} rows={items} loading={loading} error={error} onRetry={reload}

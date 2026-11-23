@@ -84,7 +84,7 @@ export default function ClientForm() {
               <div className="input-group"><span className="input-group-text small">{base}</span>
                 <input className="form-control" value={v.slug} required onChange={(e) => { setSlugTouched(true); set('slug', slugify(e.target.value)); }} placeholder="kashiputra" /></div>
             </Field>
-            <Field label="Own domain (optional)" error={errors.domain} help="e.g. epaper.kashiputra.com — point this domain's DNS (A record) to your server. The newspaper then also opens on its own domain.">
+            <Field label="Own domain (optional)" error={errors.domain} help="e.g. epaper.kashiputra.com — add an A record pointing to your server IP. After saving, the website and free SSL are set up automatically (status on the client page).">
               <input className="form-control" value={v.domain} onChange={(e) => set('domain', e.target.value)} placeholder="epaper.example.com" />
             </Field>
           </Panel>

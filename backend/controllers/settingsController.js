@@ -95,7 +95,7 @@ const watermarkPreview = asyncHandler(async (req, res) => {
     wm.opacity = Number(wm.opacity); wm.size = Number(wm.size); wm.rotation = Number(wm.rotation);
     if (req.file) wm.logo = await images.storeImage(req.file.path, 'tmp-preview', { keepFormat: true });
     const sample = await one(`SELECT pi.path FROM page_images pi JOIN edition_pages p ON p.id=pi.page_id JOIN editions e ON e.id=p.edition_id AND e.deleted_at IS NULL
-      WHERE pi.variant='medium' ORDER BY pi.id DESC LIMIT 1`);
+      WHERE pi.variant IN ('medium','large') ORDER BY pi.id DESC LIMIT 1`);
     // use un-watermarked sample if possible
     const buf = await images.watermarkPreview(wm, sample && !saved.enabled ? sample.path : null);
     if (req.file) images.safeUnlink(images.absUpload(wm.logo));

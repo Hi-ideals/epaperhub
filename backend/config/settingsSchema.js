@@ -131,7 +131,9 @@ module.exports = {
     weekday: S(0, 'number', false), // 0 = Sunday … 6 = Saturday (weekly)
     month_day: S(1, 'number', false), // 1–31 (monthly; uses the last day in shorter months)
     include_media: S(true, 'bool', false),
+    media_every: S('weekly', 'string', false), // images in automatic backups: every | weekly | monthly | never
     keep_count: S(7, 'number', false), // automatic backups to keep
     last_auto_at: S('', 'string', false),
+    last_media_at: S('', 'string', false),
   },
 };

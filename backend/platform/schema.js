@@ -70,6 +70,7 @@ async function ensurePlatformSchema() {
   ) ${T}`);
 
   await require('./credentials').ensure();
+  await require('./domains').ensureTable();
 
   await master.query(`CREATE TABLE IF NOT EXISTS platform_activity (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

@@ -11,11 +11,13 @@ sharp.cache(false);
 const up = () => config.paths.uploads;
 const orig = () => config.paths.originals;
 
+// Page images readers see. "large" is loaded when the reader zooms in; sized for sharp text at 3x zoom.
+// ONE web image per page is stored (sharp at full zoom). Reading and thumbnail sizes are made
+// from it on request (server.js /uploads ...-large.webp?w=) and cached in memory, never on disk.
 const VARIANTS = {
-  large: { width: 2200, quality: 84 },
-  medium: { width: 1100, quality: 80 },
-  thumb: { width: 320, quality: 72 },
+  large: { width: 4000, quality: 78, sharpen: 0.5 },
 };
+const SIZES = { medium: 1400, thumb: 360 }; // widths served on the fly
 
 const rel = (abs) => path.relative(up(), abs).split(path.sep).join('/');
 const absUpload = (r) => path.join(up(), r);
@@ -97,22 +99,59 @@ async function watermarkLayers(width, height, wm) {
 }
 
 /** Create web variants (large/medium/thumb) from an original image. Never modifies the original. */
-async function buildVariants(originalAbs, editionId, wmOverride) {
+async function buildVariants(originalAbs, editionId, wmOverride, opts = {}) {
   const wm = wmOverride || (await settings.getGroup('watermark_settings'));
   const dir = path.join(up(), 'editions', String(editionId));
   mkdir(dir);
   const token = `${Date.now()}-${randomToken(5)}`;
   const out = {};
-  for (const [name, v] of Object.entries(VARIANTS)) {
-    const resized = await sharp(originalAbs, { limitInputPixels: 400e6 }).rotate().resize({ width: v.width, withoutEnlargement: true }).toBuffer({ resolveWithObject: true });
+  const srcWidth = (await sharp(originalAbs, { limitInputPixels: 400e6 }).metadata()).width || 0;
+  for (const [name, v0] of Object.entries(VARIANTS)) {
+    // PDF pages: readers zoom into the PDF itself (vector), so the picture only needs reading size
+    const v = opts.fromPdf && name === 'large' ? { ...v0, width: 2000, quality: 80, sharpen: 0.5 } : v0;
+    if (v.onlyIfWiderThan && srcWidth <= v.onlyIfWiderThan) continue; // no extra detail to show
+    let pipe = sharp(originalAbs, { limitInputPixels: 400e6 }).rotate().resize({ width: v.width, withoutEnlargement: true, kernel: 'lanczos3' });
+    if (v.sharpen) pipe = pipe.sharpen({ sigma: v.sharpen }); // keeps small newspaper text crisp after downscaling
+    const resized = await pipe.toBuffer({ resolveWithObject: true });
     let img = sharp(resized.data);
     const applyWm = name !== 'thumb' && wm.enabled;
     if (applyWm) img = img.composite(await watermarkLayers(resized.info.width, resized.info.height, wm));
     const dest = path.join(dir, `${token}-${name}.webp`);
-    const info = await img.webp({ quality: v.quality }).toFile(dest);
+    const info = await img.webp({ quality: v.quality, smartSubsample: true, effort: 5 }).toFile(dest);
     out[name] = { path: rel(dest), mime: 'image/webp', width: info.width, height: info.height, size_bytes: info.size, is_watermarked: applyWm ? 1 : 0 };
   }
   return out;
+}
+
+/** Split a PDF into one small PDF per page (vector: far smaller than a picture of the page). */
+async function splitPdf(pdfPath) {
+  const { PDFDocument } = require('pdf-lib');
+  const src = await PDFDocument.load(await fs.promises.readFile(pdfPath), { ignoreEncryption: true });
+  const out = [];
+  for (let i = 0; i < src.getPageCount(); i++) {
+    const d = await PDFDocument.create();
+    const [pg] = await d.copyPages(src, [i]);
+    d.addPage(pg);
+    out.push(Buffer.from(await d.save({ useObjectStreams: true })));
+  }
+  return out;
+}
+
+/** Keep a single-page PDF as the page original. `renderedPng` gives the page size. */
+async function saveOriginalPdf(pdfBuf, editionId, renderedPng) {
+  const meta = await sharp(renderedPng).metadata();
+  const dir = path.join(orig(), 'editions', String(editionId));
+  mkdir(dir);
+  const dest = path.join(dir, `${Date.now()}-${randomToken(6)}.pdf`);
+  await fs.promises.writeFile(dest, pdfBuf);
+  return { path: path.relative(orig(), dest).split(path.sep).join('/'), mime: 'application/pdf', width: meta.width, height: meta.height, size_bytes: pdfBuf.length, is_watermarked: 0 };
+}
+
+/** Image file to build web variants from: the original itself, or a fresh render of a PDF original. */
+async function renderSource(originalAbs) {
+  if (!/\.pdf$/i.test(originalAbs)) return { file: originalAbs, fromPdf: false, cleanup: () => {} };
+  const [png] = await pdfToImages(originalAbs);
+  return { file: png, fromPdf: true, cleanup: () => safeUnlink(png) };
 }
 
 /** Save an uploaded page original into private storage. */
@@ -123,16 +162,23 @@ async function saveOriginal(tmpPath, editionId, originalName) {
   const ext = { jpeg: '.jpg', png: '.png', webp: '.webp', gif: '.gif' }[meta.format] || path.extname(originalName);
   const dest = path.join(dir, `${Date.now()}-${randomToken(6)}${ext}`);
   await fs.promises.copyFile(tmpPath, dest);
-  const stat = await fs.promises.stat(dest);
+  // Store it smaller with no visible loss (PNG/PDF pages → lossless WebP; very heavy JPEG → q95 4:4:4)
+  let finalPath = dest; let mime = `image/${meta.format === 'jpeg' ? 'jpeg' : meta.format}`;
+  try {
+    const small = await require('./storageOptimizer').shrinkOriginal(dest);
+    if (small) { if (small.abs !== dest) await fs.promises.unlink(dest); finalPath = small.abs; mime = small.mime; }
+  } catch { /* keep the file as uploaded */ }
+  const stat = await fs.promises.stat(finalPath);
   return {
-    path: path.relative(orig(), dest).split(path.sep).join('/'),
-    mime: `image/${meta.format === 'jpeg' ? 'jpeg' : meta.format}`,
-    width: meta.width, height: meta.height, size_bytes: stat.size, is_watermarked: 0,
+    path: path.relative(orig(), finalPath).split(path.sep).join('/'),
+    mime, width: meta.width, height: meta.height, size_bytes: stat.size, is_watermarked: 0,
   };
 }
 
 /** Rasterise every page of a PDF to PNG files (returns temp paths). */
-async function pdfToImages(pdfPath, scale = 2.2) {
+/** PDF pages are drawn about this wide (px): sharp text even when readers zoom in. */
+const PDF_TARGET_WIDTH = 4000;
+async function pdfToImages(pdfPath) {
   const { createCanvas } = require('@napi-rs/canvas');
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const data = new Uint8Array(await fs.promises.readFile(pdfPath));
@@ -146,6 +192,9 @@ async function pdfToImages(pdfPath, scale = 2.2) {
   const outputs = [];
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
+    const base = page.getViewport({ scale: 1 });
+    let scale = Math.min(8, Math.max(2, PDF_TARGET_WIDTH / base.width));
+    if (base.width * base.height * scale * scale > 90e6) scale = Math.sqrt(90e6 / (base.width * base.height)); // memory guard
     const viewport = page.getViewport({ scale });
     const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
     const ctx = canvas.getContext('2d');
@@ -175,28 +224,30 @@ async function cropClip(pageLargeRel, box, brand = {}) {
   const ch = Math.max(20, Math.min(meta.height - top, Math.round(box.h * meta.height)));
   const crop = await sharp(src).extract({ left, top, width: cw, height: ch }).toBuffer();
 
+  // Header: logo across ~80% of the width; a thin row below it with the date (left) and page + website (right)
   const W = Math.max(cw, 720);
-  const H = Math.round(Math.min(170, Math.max(96, W * 0.1)));
-  const pad = Math.round(H * 0.18);
-  const layers = [];
-  let logoPlaced = false;
-  if (brand.logo) {
-    const lp = absUpload(brand.logo);
-    if (fs.existsSync(lp)) {
-      try {
-        const lb = await sharp(lp).resize({ width: Math.round(W * 0.48), height: H - pad * 2, fit: 'inside' }).png().toBuffer();
-        const lm = await sharp(lb).metadata();
-        layers.push({ input: lb, left: pad, top: Math.round((H - lm.height) / 2) });
-        logoPlaced = true;
-      } catch { /* ignore broken logo */ }
-    }
+  const pad = Math.round(W * 0.02);
+  const fsz = Math.round(Math.min(15, Math.max(11, W * 0.0105)));
+  let logoBuf = null; let lw = Math.round(W * 0.8); let lh = Math.round(W * 0.09);
+  if (brand.logo && fs.existsSync(absUpload(brand.logo))) {
+    try {
+      // trim empty/white border around the logo so the logo itself fills the space
+      const trimmed = await sharp(absUpload(brand.logo)).trim({ threshold: 12 }).png().toBuffer().catch(() => fs.readFileSync(absUpload(brand.logo)));
+      logoBuf = await sharp(trimmed).resize({ width: lw, height: Math.round(W * 0.26), fit: 'inside' }).png().toBuffer();
+      const lm = await sharp(logoBuf).metadata(); lw = lm.width; lh = lm.height;
+    } catch { logoBuf = null; }
   }
-  const t1 = Math.round(H * 0.24); const t2 = Math.round(H * 0.22);
+  const H = Math.round(pad + lh + pad * 0.6 + fsz + pad * 0.8);
+  const rowY = Math.round(pad + lh + pad * 0.6 + fsz / 2);
+  const layers = logoBuf ? [{ input: logoBuf, left: Math.round((W - lw) / 2), top: pad }] : [];
+  const name = brand.siteName || 'ePaper';
+  const nameSize = Math.round(Math.min(lh * 0.9, (W * 0.8) / Math.max(4, name.length * 0.62)));
+  const pageText = `Page no:${brand.pageNo || ''} | ${brand.domain || ''}`;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
     <rect width="100%" height="100%" fill="#ffffff"/>
-    ${logoPlaced ? '' : `<text x="${pad}" y="${H / 2}" dominant-baseline="middle" font-family="Georgia, serif" font-weight="900" font-size="${Math.round(H * 0.42)}" fill="${escapeXml(brand.color || '#c8102e')}">${escapeXml(brand.siteName || 'ePaper')}</text>`}
-    <text x="${W - pad}" y="${Math.round(H * 0.44)}" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="${t1}" fill="#1f2937">${escapeXml(brand.dateText || '')}</text>
-    <text x="${W - pad}" y="${Math.round(H * 0.78)}" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="${t2}" fill="#1f2937">${escapeXml(`Page no:${brand.pageNo || ''} | ${brand.domain || ''}`)}</text>
+    ${logoBuf ? '' : `<text x="${W / 2}" y="${pad + lh / 2}" text-anchor="middle" dominant-baseline="middle" font-family="Georgia, serif" font-weight="900" font-size="${nameSize}" fill="${escapeXml(brand.color || '#c8102e')}">${escapeXml(name)}</text>`}
+    <text x="${pad}" y="${rowY}" dominant-baseline="middle" font-family="Arial, Helvetica, sans-serif" font-size="${fsz}" fill="#6b7280">${escapeXml(brand.dateText || '')}</text>
+    <text x="${W - pad}" y="${rowY}" text-anchor="end" dominant-baseline="middle" font-family="Arial, Helvetica, sans-serif" font-size="${fsz}" fill="#6b7280">${escapeXml(pageText)}</text>
     <rect y="${H - 2}" width="100%" height="2" fill="#d1d5db"/>
   </svg>`;
   const dir = path.join(up(), 'clips');
@@ -228,4 +279,4 @@ async function squareIcon(srcRel, size) {
   return sharp(src).resize(size, size, { fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 1 } }).png().toBuffer();
 }
 
-module.exports = { VARIANTS, storeImage, saveOriginal, buildVariants, pdfToImages, cropClip, watermarkPreview, watermarkLayers, squareIcon, absUpload, absOriginal, safeUnlink, assertImage };
+module.exports = { SIZES, VARIANTS, storeImage, saveOriginal, saveOriginalPdf, splitPdf, renderSource, buildVariants, pdfToImages, cropClip, watermarkPreview, watermarkLayers, squareIcon, absUpload, absOriginal, safeUnlink, assertImage };

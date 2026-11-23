@@ -27,6 +27,11 @@ router.post('/clients/:id/renew', A, c.clientRenew);
 router.post('/clients/:id/reset-password', A, c.clientResetPassword);
 router.post('/clients/:id/login-as', A, c.clientImpersonate);
 router.post('/clients/:id/delete', A, c.clientDelete);
+router.get('/clients/:id/domain', A, c.clientDomain);
+router.post('/clients/:id/domain/check', A, c.clientDomainCheck);
+router.get('/domain-setup', A, c.domainSetup);
+router.get('/clients/:id/storage', A, c.clientStorage);
+router.post('/clients/:id/storage/optimize', A, c.clientStorageOptimize);
 
 router.get('/settings', A, c.settingsGet);
 router.put('/settings', A, c.settingsSave);

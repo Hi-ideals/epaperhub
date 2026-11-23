@@ -9,7 +9,7 @@ const config = require('../config');
 const { one } = require('../config/db');
 const settings = require('./settings');
 const cache = require('./cache');
-const { fileUrl } = require('../utils/helpers');
+const { fileUrl, sizedUrl } = require('../utils/helpers');
 
 let template = null;
 function getTemplate() {
@@ -37,7 +37,7 @@ async function metaFor(urlPath) {
       WHERE e.slug=? AND e.status='published' AND e.is_active=1 AND e.deleted_at IS NULL`, [decodeURIComponent(mt[1])]);
     if (ed) {
       const pn = Number(mt[2] || 1);
-      const pg = await one(`SELECT p.id, p.title, pi.path FROM edition_pages p LEFT JOIN page_images pi ON pi.page_id=p.id AND pi.variant='medium' WHERE p.edition_id=? AND p.is_visible=1 ORDER BY p.page_number LIMIT 1 OFFSET ?`, [ed.id, pn - 1]);
+      const pg = await one(`SELECT p.id, p.title, pi.path FROM edition_pages p LEFT JOIN page_images pi ON pi.page_id=p.id AND pi.variant=(SELECT IF(COUNT(*)>0,'medium','large') FROM page_images x WHERE x.page_id=p.id AND x.variant='medium') WHERE p.edition_id=? AND p.is_visible=1 ORDER BY p.page_number LIMIT 1 OFFSET ?`, [ed.id, pn - 1]);
       const seoE = await one("SELECT * FROM seo_settings WHERE entity_type='edition' AND entity_id=?", [ed.id]);
       const seoP = pg ? await one("SELECT * FROM seo_settings WHERE entity_type='page' AND entity_id=?", [pg.id]) : null;
       const s = { ...(seoE || {}), ...Object.fromEntries(Object.entries(seoP || {}).filter(([, v]) => v)) };
@@ -45,7 +45,7 @@ async function metaFor(urlPath) {
         title: s.meta_title || `${ed.title} – ${ed.edition_date}${pn > 1 ? ` – Page ${pn}` : ''} | ${site.site_name}`,
         description: s.meta_description || ed.description || `Read ${ed.title} (${ed.cat}) dated ${ed.edition_date} online – ${site.site_name} ePaper.`,
         keywords: s.meta_keywords || m.keywords, og_title: s.og_title, og_description: s.og_description,
-        image: abs(fileUrl(s.og_image) || fileUrl(pg?.path) || fileUrl(ed.cover_image)) || m.image,
+        image: abs(fileUrl(s.og_image) || sizedUrl(pg?.path, 1400) || sizedUrl(ed.cover_image, 1400)) || m.image,
         canonical: s.canonical_url || `${base}${urlPath}`, robots: s.robots || m.robots, type: 'article',
       });
     }

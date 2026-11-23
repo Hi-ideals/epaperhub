@@ -1,10 +1,11 @@
 const router = require('express').Router();
 const c = require('../controllers/pagesController');
-const { can } = require('../middleware/auth');
+const { can, authenticate } = require('../middleware/auth');
 const { pageUpload } = require('../middleware/upload');
 const config = require('../config');
 
 router.get('/:pageId/download', c.publicDownload); // public (permission checked inside)
+router.get('/:pageId/pdf', authenticate(false), c.pagePdf); // vector page for sharp zoom (public when published)
 
 router.get('/edition/:editionId', can('pages.view'), c.list);
 router.get('/edition/:editionId/validate', can('pages.view', 'editions.publish'), c.validateEdition);

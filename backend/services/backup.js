@@ -226,8 +226,14 @@ async function runAutoBackupIfDue() {
     try {
       // Mark first so a slow/failed backup isn't retried every minute
       await settings.updateGroup('backup_settings', { last_auto_at: new Date().toISOString() });
-      const { done } = await createBackup({ type: s.frequency || 'daily', includeMedia: !!s.include_media });
+      // Images are big and rarely change: put them in an automatic backup only every week/month (database every time)
+      const every = s.include_media === false ? 'never' : (s.media_every || 'weekly');
+      const lastMedia = s.last_media_at ? new Date(s.last_media_at).getTime() : 0;
+      const gap = { every: 0, weekly: 6.5 * 864e5, monthly: 29 * 864e5 }[every];
+      const includeMedia = every !== 'never' && (gap === 0 || !lastMedia || Date.now() - lastMedia >= gap);
+      const { done } = await createBackup({ type: s.frequency || 'daily', includeMedia });
       await done;
+      if (includeMedia) await settings.updateGroup('backup_settings', { last_media_at: new Date().toISOString() });
     } finally { await conn.query("SELECT RELEASE_LOCK(CONCAT('epaper_backup_', DATABASE()))"); }
   } catch (e) {
     console.error('[backup] auto backup error:', e.message);

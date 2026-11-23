@@ -62,7 +62,7 @@ app.use('/api/v1/platform', require('./platform/routes'));
 app.get(['/api/health', '/api/v1/health'], async (req, res) => {
   try {
     await require('./config/db').master.query('SELECT 1');
-    res.json({ success: true, message: 'ok', database: 'up', uptime_s: Math.round(process.uptime()), time: new Date() });
+    res.json({ success: true, message: 'ok', database: 'up', tenant: req.tenant?.slug || null, uptime_s: Math.round(process.uptime()), time: new Date() });
   } catch (e) {
     res.status(503).json({ success: false, message: 'database unavailable', database: 'down', time: new Date() });
   }
@@ -81,6 +81,8 @@ app.use(['/api/v1/editions/public', '/api/v1/clippings', '/api/v1/comments/publi
 });
 
 // Uploaded public files (originals are stored outside this folder)
+// Page images: smaller sizes made on the fly from the one stored file ("...-large.webp?w=1400")
+app.use('/uploads', require('./services/pageSizes'));
 app.use('/uploads', express.static(config.paths.uploadsRoot, { maxAge: '30d', immutable: true, index: false, dotfiles: 'deny' }));
 
 // API

@@ -1,4 +1,4 @@
-const { fileUrl } = require('../utils/helpers');
+const { fileUrl, sizedUrl } = require('../utils/helpers');
 const webpush = require('web-push');
 const config = require('../config');
 const settings = require('./settings');
@@ -79,7 +79,7 @@ async function notifyEditionPublished(edition, userId = null) {
   const res = await query(
     'INSERT INTO push_notifications (title, message, image, url, audience, edition_id, created_by) VALUES (?,?,?,?,?,?,?)',
     [`${s.site_name}: ${edition.title}`, `Today's ePaper (${edition.edition_date}) is now available. Tap to read.`,
-      edition.cover_image ? fileUrl(edition.cover_image) : null, `/edition/${edition.slug}`, 'all', edition.id, userId]);
+      edition.cover_image ? sizedUrl(edition.cover_image, 1400) : null, `/edition/${edition.slug}`, 'all', edition.id, userId]);
   const [row] = await query('SELECT * FROM push_notifications WHERE id=?', [res.insertId]);
   return sendNotification(row).catch((e) => console.error('push failed', e.message));
 }

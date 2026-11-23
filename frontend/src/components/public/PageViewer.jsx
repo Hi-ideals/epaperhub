@@ -1,8 +1,9 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { mediaUrl } from '../../services/api';
+import { loadPdfPage, renderVisible } from './pdfZoom';
 
 const MIN = 1;
-const MAX = 6;
+const MAX_LIMIT = 6;
 const clampN = (v, a, b) => Math.min(b, Math.max(a, v));
 
 /**
@@ -25,6 +26,8 @@ const PageViewer = forwardRef(function PageViewer({ page, onPrev, onNext, cropMo
   viewRef.current = view;
 
   const img = page?.images || {};
+  // Deepest zoom that still looks sharp: best image stretched at most 1.4x (never less than 3x zoom)
+  const bestW = img.xlarge?.width || img.large?.width || img.medium?.width || 2000;
   const ratio = (img.large?.height || img.medium?.height || 1414) / (img.large?.width || img.medium?.width || 1000);
 
   // Base (scale = 1) displayed size
@@ -37,6 +40,9 @@ const PageViewer = forwardRef(function PageViewer({ page, onPrev, onNext, cropMo
     }
     return { w, h: w * ratio };
   })();
+  // Pages kept as PDF zoom into the vector page itself → sharp at any zoom (not used when a watermark is on)
+  const vector = !!page?.pdf_url && !img.large?.watermarked;
+  const MAX = vector ? MAX_LIMIT : base.w ? Math.min(MAX_LIMIT, Math.max(3, (bestW * 1.4) / (base.w * (window.devicePixelRatio || 1)))) : MAX_LIMIT;
 
   const clampView = useCallback((v) => {
     const { w: cw, h: ch } = size;
@@ -68,12 +74,17 @@ const PageViewer = forwardRef(function PageViewer({ page, onPrev, onNext, cropMo
     setSrc(page ? mediaUrl(img.medium?.url || img.large?.url) : '');
   }, [page?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Upgrade to the large image once zoom / screen density needs it (loaded in background, no flicker)
+  // Swap to a sharper image once zoom / screen density needs it (loaded in background, no flicker):
+  // medium → large → xlarge, always the smallest one that is sharp enough
   useEffect(() => {
-    if (!page || !img.large || !base.w) return undefined;
+    if (!page || !base.w) return undefined;
     const needed = base.w * view.s * (window.devicePixelRatio || 1);
-    if (needed <= (img.medium?.width || 1100) * 1.05) return undefined;
-    const target = mediaUrl(img.large.url);
+    const ladder = ['medium', 'large', 'xlarge'].map((k) => img[k]).filter(Boolean);
+    if (!ladder.length) return undefined;
+    const pick = ladder.find((v) => v.width >= needed * 0.95) || ladder[ladder.length - 1];
+    const cur = ladder.find((v) => mediaUrl(v.url) === src);
+    if (cur && cur.width >= pick.width) return undefined; // never step down while zoomed
+    const target = mediaUrl(pick.url);
     if (src === target) return undefined;
     let alive = true;
     const pre = new Image();
@@ -81,6 +92,36 @@ const PageViewer = forwardRef(function PageViewer({ page, onPrev, onNext, cropMo
     pre.src = target;
     return () => { alive = false; };
   }, [page?.id, Math.ceil(view.s * 2), base.w]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Vector layer: after zoom/pan settles, draw the visible part of the PDF page at screen resolution
+  const canvasRef = useRef(null);
+  const [drawn, setDrawn] = useState(null); // view the canvas was drawn for
+  useEffect(() => { setDrawn(null); }, [page?.id, size.w, size.h, fitMode]);
+  useEffect(() => {
+    if (!vector || !base.w || view.s <= 1.02 || !canvasRef.current) return undefined;
+    let job = null; let alive = true;
+    const t = setTimeout(async () => {
+      try {
+        const pdfPage = await loadPdfPage(page.pdf_url);
+        if (!alive || !canvasRef.current) return;
+        const v = viewRef.current;
+        // draw into an offscreen canvas, then swap in one step (no flicker)
+        const off = document.createElement('canvas');
+        job = renderVisible(pdfPage, off, { boxW: size.w, boxH: size.h, x: v.x, y: v.y, pageW: base.w * v.s });
+        await job.promise;
+        if (!alive || !canvasRef.current) return;
+        const c = canvasRef.current;
+        c.width = off.width; c.height = off.height;
+        // copy only the page area (outside the page stays transparent)
+        const dpr = off.width / size.w;
+        const ctx = c.getContext('2d');
+        ctx.save(); ctx.beginPath(); ctx.rect(v.x * dpr, v.y * dpr, base.w * v.s * dpr, base.h * v.s * dpr); ctx.clip();
+        ctx.drawImage(off, 0, 0); ctx.restore();
+        setDrawn({ ...v });
+      } catch { /* keep the picture */ }
+    }, 140);
+    return () => { alive = false; clearTimeout(t); job?.cancel(); };
+  }, [vector, page?.pdf_url, view.s, view.x, view.y, size.w, size.h, base.w]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const zoomAt = useCallback((factor, px, py) => {
     if (!allowZoom) return;
@@ -90,7 +131,7 @@ const PageViewer = forwardRef(function PageViewer({ page, onPrev, onNext, cropMo
       const k = s / v.s;
       return clampView({ s, x: cx - (cx - v.x) * k, y: cy - (cy - v.y) * k });
     });
-  }, [allowZoom, clampView, size.w, size.h]);
+  }, [allowZoom, clampView, size.w, size.h, MAX]);
 
   const reset = useCallback(() => setView(clampView({ s: 1, x: 0, y: 0 })), [clampView]);
   const panBy = useCallback((dx, dy) => setView((v) => clampView({ ...v, x: v.x + dx, y: v.y + dy })), [clampView]);
@@ -251,6 +292,15 @@ const PageViewer = forwardRef(function PageViewer({ page, onPrev, onNext, cropMo
           style={{ width: base.w, height: base.h, transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.s})` }}
         />
       )}
+      {vector && (() => {
+        const show = drawn && view.s > 1.02;
+        const r = show ? view.s / drawn.s : 1;
+        return (
+          <canvas ref={canvasRef} className="ep-vector" aria-hidden="true"
+            style={{ width: size.w, height: size.h, opacity: show ? 1 : 0,
+              transform: show ? `translate3d(${view.x - drawn.x * r}px, ${view.y - drawn.y * r}px, 0) scale(${r})` : 'none' }} />
+        );
+      })()}
       {!cropMode && !loading && areas.map((a) => (
         <div key={a.id} data-area={a.id} className="ep-area" role="link" aria-label={a.title || 'Open article'}
           style={{ left: view.x + a.x * base.w * view.s, top: view.y + a.y * base.h * view.s, width: a.w * base.w * view.s, height: a.h * base.h * view.s }}>

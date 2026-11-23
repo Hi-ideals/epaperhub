@@ -1,3 +1,4 @@
+import { BASENAME } from '../../services/tenant';
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -353,7 +354,7 @@ function SettingsForm({ group }) {
             </div>
           )}
           {group === 'recaptcha' && <div className="col-lg-4"><Panel title="Test configuration"><RecaptchaTest values={values} /></Panel></div>}
-          {group === 'pwa' && <div className="col-xl-3"><Panel title="Manifest"><p className="small text-muted">The web app manifest and icons are generated from these settings.</p><a href={`${API_ORIGIN}/manifest.webmanifest`} target="_blank" rel="noreferrer" className="small">View manifest.webmanifest</a></Panel></div>}
+          {group === 'pwa' && <div className="col-xl-3"><Panel title="Manifest"><p className="small text-muted">The web app manifest and icons are generated from these settings.</p><a href={`${API_ORIGIN}${BASENAME}/manifest.webmanifest`} target="_blank" rel="noreferrer" className="small">View manifest.webmanifest</a></Panel></div>}
         </div>
       </form>
       <Modal show={regen} onClose={() => setRegen(false)} title="Apply watermark to existing pages?" footer={<><button className="btn btn-light" onClick={() => setRegen(false)}>Later</button><button className="btn btn-primary" onClick={() => { setRegen(false); runAction(() => post('/pages/regenerate', {})); }}>Apply now</button></>}>
