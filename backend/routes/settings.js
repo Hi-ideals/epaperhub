@@ -6,6 +6,8 @@ const { can } = require('../middleware/auth');
 const { imageUpload } = require('../middleware/upload');
 
 router.get('/public', c.publicSettings);
+const visitLimiter = require('express-rate-limit')({ windowMs: 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false });
+router.post('/visit', visitLimiter, c.visit);
 router.post('/watermark/preview', can('settings.view'), imageUpload.single('logo'), c.watermarkPreview);
 router.post('/recaptcha/test', can('settings.manage'), c.recaptchaTest);
 router.get('/social', can('settings.view'), c.socialList);

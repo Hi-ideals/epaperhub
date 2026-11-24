@@ -57,7 +57,7 @@ function guarded(m) {
 }
 
 /** Page uploads (images + optional PDF). */
-const pageUpload = guarded(multer({ storage, fileFilter: makeFilter({ allowPdf: true }), limits: { fileSize: config.upload.maxBytes, files: config.upload.maxFiles } }));
+const pageUpload = guarded(multer({ storage, fileFilter: makeFilter({ allowPdf: true }), limits: { fileSize: config.upload.pageMaxBytes, files: config.upload.pageMaxFiles } }));
 /** Generic image uploads (logos, covers, category images...). 8 MB. */
 const imageUpload = guarded(multer({ storage, fileFilter: makeFilter({ allowSvgIco: true }), limits: { fileSize: 8 * 1024 * 1024, files: 10 } }));
 
@@ -67,4 +67,14 @@ function cleanupFiles(req) {
   for (const f of files.flat()) if (f?.path) fs.promises.unlink(f.path).catch(() => {});
 }
 
-module.exports = { pageUpload, imageUpload, cleanupFiles };
+/** All files of one page upload together may be at most PAGE_MAX_UPLOAD_MB (default 10 MB). */
+function pageTotalLimit(req, res, next) {
+  const files = [].concat(req.file || [], Array.isArray(req.files) ? req.files : []);
+  const total = files.reduce((a, f) => a + (f.size || 0), 0);
+  if (total <= config.upload.pageMaxBytes) return next();
+  cleanupFiles(req);
+  const mb = Math.round(config.upload.pageMaxBytes / 1048576);
+  return res.status(400).json({ success: false, message: `Total upload size is ${(total / 1048576).toFixed(1)} MB. All files together can be at most ${mb} MB per upload.` });
+}
+
+module.exports = { pageUpload, pageTotalLimit, imageUpload, cleanupFiles };

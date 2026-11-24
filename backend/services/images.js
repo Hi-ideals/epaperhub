@@ -224,11 +224,11 @@ async function cropClip(pageLargeRel, box, brand = {}) {
   const ch = Math.max(20, Math.min(meta.height - top, Math.round(box.h * meta.height)));
   const crop = await sharp(src).extract({ left, top, width: cw, height: ch }).toBuffer();
 
-  // Header: logo across ~80% of the width; a thin row below it with the date (left) and page + website (right)
+  // Header: logo across ~70% of the width; a thin row below it with the date (left) and page + website (right)
   const W = Math.max(cw, 720);
   const pad = Math.round(W * 0.02);
-  const fsz = Math.round(Math.min(15, Math.max(11, W * 0.0105)));
-  let logoBuf = null; let lw = Math.round(W * 0.8); let lh = Math.round(W * 0.09);
+  const fsz = Math.round(Math.min(24, Math.max(15, W * 0.016)));
+  let logoBuf = null; let lw = Math.round(W * 0.7); let lh = Math.round(W * 0.09);
   if (brand.logo && fs.existsSync(absUpload(brand.logo))) {
     try {
       // trim empty/white border around the logo so the logo itself fills the space
@@ -241,13 +241,13 @@ async function cropClip(pageLargeRel, box, brand = {}) {
   const rowY = Math.round(pad + lh + pad * 0.6 + fsz / 2);
   const layers = logoBuf ? [{ input: logoBuf, left: Math.round((W - lw) / 2), top: pad }] : [];
   const name = brand.siteName || 'ePaper';
-  const nameSize = Math.round(Math.min(lh * 0.9, (W * 0.8) / Math.max(4, name.length * 0.62)));
+  const nameSize = Math.round(Math.min(lh * 0.9, (W * 0.7) / Math.max(4, name.length * 0.62)));
   const pageText = `Page no:${brand.pageNo || ''} | ${brand.domain || ''}`;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
     <rect width="100%" height="100%" fill="#ffffff"/>
     ${logoBuf ? '' : `<text x="${W / 2}" y="${pad + lh / 2}" text-anchor="middle" dominant-baseline="middle" font-family="Georgia, serif" font-weight="900" font-size="${nameSize}" fill="${escapeXml(brand.color || '#c8102e')}">${escapeXml(name)}</text>`}
-    <text x="${pad}" y="${rowY}" dominant-baseline="middle" font-family="Arial, Helvetica, sans-serif" font-size="${fsz}" fill="#6b7280">${escapeXml(brand.dateText || '')}</text>
-    <text x="${W - pad}" y="${rowY}" text-anchor="end" dominant-baseline="middle" font-family="Arial, Helvetica, sans-serif" font-size="${fsz}" fill="#6b7280">${escapeXml(pageText)}</text>
+    <text x="${pad}" y="${rowY}" dominant-baseline="middle" font-family="Arial, Helvetica, sans-serif" font-size="${fsz}" font-weight="700" fill="#111827">${escapeXml(brand.dateText || '')}</text>
+    <text x="${W - pad}" y="${rowY}" text-anchor="end" dominant-baseline="middle" font-family="Arial, Helvetica, sans-serif" font-size="${fsz}" font-weight="700" fill="#111827">${escapeXml(pageText)}</text>
     <rect y="${H - 2}" width="100%" height="2" fill="#d1d5db"/>
   </svg>`;
   const dir = path.join(up(), 'clips');

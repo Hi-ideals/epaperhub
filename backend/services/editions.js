@@ -60,7 +60,8 @@ async function mailSubscribers(edition) {
 /** Pages with their image variant URLs. */
 async function pagesWithImages(editionId, { onlyVisible = false, withAreas = false } = {}) {
   const pages = await query(
-    `SELECT id, edition_id, page_number, title, description, is_visible, width, height, original_name, view_count, created_at, updated_at
+    `SELECT id, edition_id, page_number, title, description, is_visible, width, height, original_name, view_count, created_at, updated_at,
+       COALESCE(upload_bytes, (SELECT size_bytes FROM page_images o WHERE o.page_id=edition_pages.id AND o.variant='original' LIMIT 1), 0) AS upload_bytes
        FROM edition_pages WHERE edition_id=? ${onlyVisible ? 'AND is_visible=1' : ''} ORDER BY page_number`, [editionId]);
   if (!pages.length) return [];
   const imgs = await query(`SELECT page_id, variant, path, width, height, size_bytes, is_watermarked FROM page_images WHERE page_id IN (?) AND variant <> 'original'`, [pages.map((p) => p.id)]);
@@ -109,4 +110,11 @@ const serializeEdition = (e) => e && ({
   is_active: !!e.is_active,
 });
 
-module.exports = { publishEdition, pagesWithImages, renumberPages, serializeEdition };
+/** Bytes the admin has uploaded for an edition (all pages, optionally ignoring one page being replaced). */
+async function editionUploadBytes(editionId, exceptPageId = 0) {
+  const r = await one(`SELECT COALESCE(SUM(COALESCE(p.upload_bytes, (SELECT size_bytes FROM page_images o WHERE o.page_id=p.id AND o.variant='original' LIMIT 1), 0)),0) n
+    FROM edition_pages p WHERE p.edition_id=? AND p.id<>?`, [editionId, exceptPageId]);
+  return Number(r?.n || 0);
+}
+
+module.exports = { editionUploadBytes, publishEdition, pagesWithImages, renumberPages, serializeEdition };

@@ -137,14 +137,14 @@ export async function buildBrandedClip({ page, selection, edition, site }) {
   const im = await loadImg(mediaUrl(page.images.large?.url || page.images.medium?.url));
   const sx = selection.x * im.naturalWidth; const sy = selection.y * im.naturalHeight;
   const cw = Math.max(1, Math.round(selection.w * im.naturalWidth)); const ch = Math.max(1, Math.round(selection.h * im.naturalHeight));
-  // Header: logo across ~80% of the width; a thin row below it with the date (left) and page + website (right)
+  // Header: logo across ~70% of the width; a thin row below it with the date (left) and page + website (right)
   const W = Math.max(cw, 720);
   const pad = Math.round(W * 0.02);
-  const fs = Math.round(Math.min(15, Math.max(11, W * 0.0105)));
+  const fs = Math.round(Math.min(24, Math.max(15, W * 0.016)));
   const logoSrc = site.header_logo || site.site_logo;
   let logo = null;
   if (logoSrc) { try { logo = trimImage(await loadImg(mediaUrl(logoSrc))); } catch { /* text instead */ } }
-  let lw = W * 0.8; let lh = logo ? lw * (logo.sh / logo.sw) : W * 0.09;
+  let lw = W * 0.7; let lh = logo ? lw * (logo.sh / logo.sw) : W * 0.09;
   const maxLh = W * 0.26;
   if (lh > maxLh) { lw *= maxLh / lh; lh = maxLh; }
   const H = Math.round(pad + lh + pad * 0.6 + fs + pad * 0.8);
@@ -157,12 +157,12 @@ export async function buildBrandedClip({ page, selection, edition, site }) {
     g.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--ep-primary').trim() || '#c8102e';
     let size = Math.round(lh * 0.9);
     g.font = `900 ${size}px Georgia, "Noto Serif", serif`;
-    while (size > 14 && g.measureText(site.site_name || 'ePaper').width > W * 0.8) { size -= 2; g.font = `900 ${size}px Georgia, "Noto Serif", serif`; }
+    while (size > 14 && g.measureText(site.site_name || 'ePaper').width > W * 0.7) { size -= 2; g.font = `900 ${size}px Georgia, "Noto Serif", serif`; }
     g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(site.site_name || 'ePaper', W / 2, pad + lh / 2);
   }
   // Small date + page/website row
   const rowY = pad + lh + pad * 0.6 + fs / 2;
-  g.font = `500 ${fs}px "Noto Sans", Arial, sans-serif`; g.fillStyle = '#6b7280'; g.textBaseline = 'middle';
+  g.font = `700 ${fs}px "Noto Sans", Arial, sans-serif`; g.fillStyle = '#111827'; g.textBaseline = 'middle';
   g.textAlign = 'left'; g.fillText(longEditionDate(edition.edition_date), pad, rowY);
   g.textAlign = 'right'; g.fillText(`Page no:${page.position || page.page_number} | ${siteDomain(site)}`, W - pad, rowY);
   // Divider + article

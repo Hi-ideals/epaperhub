@@ -21,23 +21,44 @@ export default function PagesManager({ editionId, pages, onChange }) {
   const replaceRef = useRef(null);
   const replaceTarget = useRef(null);
   const accept = `image/jpeg,image/png,image/webp${site.allow_pdf_upload ? ',application/pdf' : ''}`;
+  const maxMb = Number(site.page_upload_max_mb) || 10;
+  const maxFiles = Number(site.page_upload_max_files) || 20;
+  const [limitAlert, setLimitAlert] = useState(null); // { total, count, files }
+  const [done, setDone] = useState(null); // { files: File[], added }
+  // Everything uploaded for this edition so far counts towards the limit
+  const used = pages.reduce((a, pg) => a + (Number(pg.upload_bytes) || 0), 0);
+  const limitBytes = maxMb * 1048576;
+  /** Edition total over the size limit, or too many files → popup instead of uploading. */
+  const checkLimits = (list, replacing = null) => {
+    const total = list.reduce((a, f) => a + f.size, 0);
+    const already = used - (replacing ? Number(replacing.upload_bytes) || 0 : 0);
+    if (already + total > limitBytes || list.length > maxFiles) {
+      setLimitAlert({ total, already, count: list.length, files: [...list].sort((a, b) => b.size - a.size) });
+      return false;
+    }
+    return true;
+  };
 
   const upload = async (files) => {
     const list = [...files].filter((f) => /^image\/(jpeg|png|webp)$/.test(f.type) || (site.allow_pdf_upload && f.type === 'application/pdf'));
     if (!list.length) return toast.error(`Only JPG, PNG, WebP${site.allow_pdf_upload ? ' or PDF' : ''} files are allowed`);
     if (list.length !== files.length) toast.error('Some files were skipped (unsupported type)');
+    if (!checkLimits(list)) { if (fileRef.current) fileRef.current.value = ''; return undefined; }
+    const before = pages.length;
     const fd = new FormData();
     list.forEach((f) => fd.append('files', f));
     setProgress({ pct: 0, total: list.reduce((a, f) => a + f.size, 0), count: list.length });
     try {
       const r = await post(`/pages/edition/${editionId}/upload`, fd, { onUploadProgress: (e) => setProgress((p) => ({ ...p, pct: Math.round((e.loaded / (e.total || 1)) * 100) })) });
-      onChange(r.data); toast.success(r.message);
+      onChange(r.data); setDone({ files: list, added: Math.max(0, (r.data?.length || 0) - before), total: r.data?.length || 0 });
     } catch (e) { toast.error(e.message); } finally { setProgress(null); if (fileRef.current) fileRef.current.value = ''; }
+    return undefined;
   };
 
   const replace = async (file) => {
     const page = replaceTarget.current;
     if (!file || !page) return;
+    if (!checkLimits([file], page)) { replaceRef.current.value = ''; return; }
     const fd = new FormData(); fd.append('file', file);
     setProgress({ pct: 0, total: file.size, count: 1, replace: page.page_number });
     try { const r = await post(`/pages/${page.id}/replace`, fd, { onUploadProgress: (e) => setProgress((p) => ({ ...p, pct: Math.round((e.loaded / (e.total || 1)) * 100) })) }); onChange(r.data); toast.success(r.message); }
@@ -83,12 +104,52 @@ export default function PagesManager({ editionId, pages, onChange }) {
               <i className="bi bi-cloud-arrow-up fs-1 text-primary" />
               <div className="fw-semibold">Drop newspaper pages here or click to browse</div>
               <div className="small text-muted">JPG, JPEG, PNG, WebP{site.allow_pdf_upload ? ' or multi-page PDF' : ''} · Bulk upload supported · Files are added in name order (page-1, page-2…)</div>
+              <div className="upload-limits mt-2">
+                <span><i className="bi bi-files" />Max {maxFiles} files per upload</span>
+                <span><i className="bi bi-hdd" />Max {maxMb} MB total per edition</span>
+              </div>
+              <div className="edition-usage mt-2" title="Size of all files uploaded for this edition">
+                <div className="bar"><i className={used > limitBytes * 0.9 ? 'warn' : ''} style={{ width: `${Math.min(100, (used / limitBytes) * 100)}%` }} /></div>
+                <span><b>{bytes(used)}</b> of {maxMb} MB used · <b>{bytes(Math.max(0, limitBytes - used))}</b> left</span>
+              </div>
             </>
           )}
           <input ref={fileRef} type="file" multiple accept={accept} hidden onChange={(e) => e.target.files.length && upload(e.target.files)} />
         </div>
       )}
       <input ref={replaceRef} type="file" accept={accept} hidden onChange={(e) => replace(e.target.files[0])} />
+
+      <Modal show={!!limitAlert} onClose={() => setLimitAlert(null)} title={<><i className="bi bi-exclamation-triangle-fill text-warning me-2" />Upload limit</>}
+        footer={<button className="btn btn-primary" onClick={() => setLimitAlert(null)}>OK, I'll fix it</button>}>
+        {limitAlert && (<>
+          <p className="mb-2">Nothing was uploaded. Please fix the following and try again:</p>
+          {limitAlert.count > maxFiles && (
+            <div className="limit-row"><i className="bi bi-files" /><div><b>Too many files: {limitAlert.count} selected.</b><div className="small text-muted">You can upload at most {maxFiles} files at a time. Upload them in batches (e.g. pages 1–{maxFiles}, then the rest).</div></div></div>
+          )}
+          {limitAlert.already + limitAlert.total > limitBytes && (
+            <div className="limit-row"><i className="bi bi-hdd" /><div>
+              <b>This edition can have at most {maxMb} MB of uploads.</b>
+              <table className="table table-sm table-borderless small my-1" style={{ maxWidth: 320 }}><tbody>
+                <tr><td>Already uploaded</td><td className="text-end">{bytes(limitAlert.already)}</td></tr>
+                <tr><td>Selected now</td><td className="text-end">{bytes(limitAlert.total)}</td></tr>
+                <tr className="fw-bold"><td>Total</td><td className="text-end text-danger">{bytes(limitAlert.already + limitAlert.total)}</td></tr>
+              </tbody></table>
+              <div className="small mt-1">Selected files:</div>
+              <ul className="small mb-1">{limitAlert.files.slice(0, 6).map((f) => <li key={f.name}>{f.name} — <b>{bytes(f.size)}</b></li>)}{limitAlert.files.length > 6 && <li>…and {limitAlert.files.length - 6} more</li>}</ul>
+              <div className="small text-muted">Tip: delete or replace pages you don't need, or make the files smaller (export the PDF with "Reduce file size" / 150–200 dpi images).</div></div></div>
+          )}
+        </>)}
+      </Modal>
+
+      <Modal show={!!done} onClose={() => setDone(null)} title={<><i className="bi bi-check-circle-fill text-success me-2" />Upload complete</>}
+        footer={<button className="btn btn-primary" onClick={() => setDone(null)}>Done</button>}>
+        {done && (<>
+          <p className="mb-2"><b>{done.added} page{done.added === 1 ? '' : 's'}</b> added from {done.files.length} file{done.files.length === 1 ? '' : 's'}. This edition now has <b>{done.total} page{done.total === 1 ? '' : 's'}</b>.</p>
+          <table className="table table-sm mb-0"><thead><tr><th>File</th><th className="text-end">Size</th></tr></thead>
+            <tbody>{done.files.map((f) => <tr key={f.name}><td className="text-truncate" style={{ maxWidth: 320 }}><i className={`bi bi-${f.type === 'application/pdf' ? 'filetype-pdf text-danger' : 'image text-primary'} me-1`} />{f.name}</td><td className="text-end">{bytes(f.size)}</td></tr>)}</tbody>
+            <tfoot><tr><th>Total</th><th className="text-end">{bytes(done.files.reduce((a, f) => a + f.size, 0))}</th></tr></tfoot></table>
+        </>)}
+      </Modal>
 
       {!pages.length ? <EmptyState icon="images" title="No pages uploaded yet" text="Upload the newspaper pages for this edition." /> : (
         <>

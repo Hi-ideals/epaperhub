@@ -1,3 +1,4 @@
+const config = require('../config');
 const { query, one } = require('../config/db');
 const { ApiError, ok, created, asyncHandler } = require('../utils/http');
 const { cleanText, fileUrl } = require('../utils/helpers');
@@ -13,6 +14,15 @@ const GROUPS = { website: 'website_settings', theme: 'theme_settings', watermark
 const tableOf = (g) => { const t = GROUPS[g]; if (!t) throw ApiError.notFound('Unknown settings group'); return t; };
 
 /** Everything the public website needs, in one cached request. */
+/** Visitor counter: POST records a visit (ping=1 just keeps "online now" fresh). */
+const visit = asyncHandler(async (req, res) => {
+  const site = await settings.getPublicGroup('website_settings');
+  if (site.visitor_counter_enabled === false) return ok(res, { enabled: false });
+  const { clientIp } = require('../utils/helpers');
+  const data = await require('../services/visitors').hit({ ip: clientIp(req), ua: String(req.get('user-agent') || ''), ping: !!(req.body?.ping || req.query.ping), start: site.visitor_counter_start });
+  ok(res, { enabled: true, ...data });
+});
+
 const publicSettings = asyncHandler(async (req, res) => {
   const data = await cache.remember('public:settings', 120, async () => {
     const site = await settings.getPublicGroup('website_settings');
@@ -36,7 +46,7 @@ const publicSettings = asyncHandler(async (req, res) => {
   // Which plan features this newspaper has (the reader site hides the rest)
   const t = require('../platform/context').current();
   const features = t ? t.features : require('../platform/features').KEYS;
-  const site = { ...data.site };
+  const site = { ...data.site, page_upload_max_mb: Math.round(config.upload.pageMaxBytes / 1048576), page_upload_max_files: config.upload.pageMaxFiles };
   if (!features.includes('comments')) site.comments_enabled = false;
   if (!features.includes('notifications')) site.push_enabled = false;
   if (!features.includes('clippings')) site.action_crop = false;
@@ -166,4 +176,4 @@ const pwaIcon = (size) => asyncHandler(async (req, res, next) => {
   res.send(buf);
 });
 
-module.exports = { publicSettings, getGroup, updateGroup, watermarkPreview, recaptchaTest, socialList, socialCreate: socialSave(true), socialUpdate: socialSave(false), socialRemove, manifest, pwaIcon, fileUrl };
+module.exports = { visit, publicSettings, getGroup, updateGroup, watermarkPreview, recaptchaTest, socialList, socialCreate: socialSave(true), socialUpdate: socialSave(false), socialRemove, manifest, pwaIcon, fileUrl };

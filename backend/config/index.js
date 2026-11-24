@@ -30,6 +30,9 @@ const config = {
   upload: {
     maxBytes: parseInt(env('MAX_UPLOAD_MB', '40'), 10) * 1024 * 1024,
     maxFiles: parseInt(env('MAX_FILES_PER_UPLOAD', '60'), 10),
+    // Newspaper page uploads (images / PDF): per file and per upload
+    pageMaxBytes: parseInt(env('PAGE_MAX_UPLOAD_MB', '10'), 10) * 1024 * 1024,
+    pageMaxFiles: parseInt(env('PAGE_MAX_FILES', '20'), 10),
   },
   paths: {
     root: path.join(__dirname, '..'),

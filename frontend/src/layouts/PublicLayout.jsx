@@ -111,6 +111,30 @@ function CategoryNav({ open, onNavigate }) {
   );
 }
 
+/** Footer visitor counter: counts this visit once per browser tab, then keeps "online now" fresh. */
+function VisitorCounter() {
+  const { site, t } = useSettings();
+  const [v, setV] = useState(null);
+  useEffect(() => {
+    if (site.visitor_counter_enabled === false) return undefined;
+    let first = true;
+    try { first = !sessionStorage.getItem('ep_visit'); sessionStorage.setItem('ep_visit', '1'); } catch { /* storage blocked */ }
+    const load = (ping) => post('/settings/visit', { ping }).then((r) => { if (r?.data?.enabled) setV(r.data); }).catch(() => {});
+    load(!first);
+    const id = setInterval(() => { if (!document.hidden) load(true); }, 90000);
+    return () => clearInterval(id);
+  }, [site.visitor_counter_enabled]);
+  if (!v) return null;
+  const n = (x) => Number(x).toLocaleString('en-IN');
+  return (
+    <div className="visitor-counter" aria-label="Visitor counter">
+      <span className="vc-item vc-total" title={t('totalVisitors')}><i className="bi bi-people-fill" /><b>{n(v.total)}</b><small>{t('totalVisitors')}</small></span>
+      <span className="vc-item" title={t('todayVisitors')}><i className="bi bi-calendar-check" /><b>{n(v.today)}</b><small>{t('todayVisitors')}</small></span>
+      <span className="vc-item" title={t('onlineNow')}><i className="vc-dot" /><b>{n(v.online)}</b><small>{t('onlineNow')}</small></span>
+    </div>
+  );
+}
+
 const SOCIAL_COLORS = { instagram: '#e1306c', youtube: '#ff0000', facebook: '#1877f2', x: '#000', twitter: '#000', whatsapp: '#25d366', telegram: '#229ed9', linkedin: '#0a66c2' };
 
 function Header() {
@@ -252,7 +276,12 @@ function Footer() {
           </div>
         </div>
       </div>
-      <div className="footer-bottom"><div className="container-xxl small">{site.copyright_text}</div></div>
+      <div className="footer-bottom">
+        <div className="container-xxl small d-flex flex-wrap align-items-center justify-content-between gap-2">
+          <span>{site.copyright_text}</span>
+          <VisitorCounter />
+        </div>
+      </div>
     </footer>
   );
 }

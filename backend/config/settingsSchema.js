@@ -27,6 +27,8 @@ module.exports = {
     timezone: S('Asia/Kolkata'),
     default_language: S('en'),
     enabled_languages: S('en,kn'),
+    visitor_counter_enabled: S(true, 'bool'),
+    visitor_counter_start: S(0, 'number'), // added to the real count (e.g. visitors from your old website)
     copyright_text: S('© {year} ePaper. All rights reserved.'),
     footer_content: S('Read the complete newspaper online, every day. Latest editions, district editions and archives.'),
     important_links: S([{ label: 'About Us', url: '/page/about-us' }, { label: 'Contact Us', url: '/page/contact-us' }], 'json'),

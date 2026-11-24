@@ -171,6 +171,8 @@ async def main():
                 n = await pg.locator('.page-tile').count()
                 if n >= 3: break
                 await pg.wait_for_timeout(500)
+            done = pg.locator('.modal:has-text("Upload complete") button:has-text("Done")')
+            if await done.count(): await done.click(); await pg.wait_for_timeout(300)
             await pg.screenshot(path=f'{SHOTS}/admin-pages.png'); return f'{n} page cards'
         await step(A, 'Upload 3 pages', ad_upload, pg)
         async def ad_publish():

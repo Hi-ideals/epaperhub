@@ -15,7 +15,11 @@ function errorHandler(err, req, res, next) {
   if (err instanceof multer.MulterError) {
     status = 400;
     //message = err.code === 'LIMIT_FILE_SIZE' ? `File too large. Maximum size is ${Math.round(config.upload.maxBytes / 1048576)} MB.` : err.message;
-    message = err.code === 'LIMIT_FILE_SIZE' ? 'File too large. Please upload a smaller file.' : err.message;
+    const isPage = /\/pages\//.test(req.originalUrl || '');
+    const mb = Math.round((isPage ? config.upload.pageMaxBytes : config.upload.maxBytes) / 1048576);
+    if (err.code === 'LIMIT_FILE_SIZE') message = isPage ? `Upload too large. All files together can be at most ${mb} MB per upload.` : `File too large. Each file can be at most ${mb} MB.`;
+    else if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') message = isPage ? `Too many files. You can upload at most ${config.upload.pageMaxFiles} files at a time.` : 'Too many files.';
+    else message = err.message;
   } else if (err.code === 'ER_DUP_ENTRY') {
     status = 409; message = 'A record with the same unique value already exists.';
   } else if (err.code === 'ER_ROW_IS_REFERENCED_2' || err.code === 'ER_ROW_IS_REFERENCED') {

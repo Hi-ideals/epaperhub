@@ -1,3 +1,4 @@
+const config = require('../config');
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
@@ -8,7 +9,7 @@ const images = require('../services/images');
 const settings = require('../services/settings');
 const cache = require('../services/cache');
 const { audit } = require('../services/audit');
-const { pagesWithImages, renumberPages } = require('../services/editions');
+const { pagesWithImages, renumberPages, editionUploadBytes } = require('../services/editions');
 const { cleanupFiles } = require('../middleware/upload');
 const { PUBLIC_WHERE } = require('./editionsController');
 
@@ -19,22 +20,31 @@ async function getEdition(id) {
 }
 
 /** Process one image file into a page row (new or replacing). */
-async function storePageImage(conn, editionId, filePath, originalName, { pageId = null, pageNumber = null, pdfPage = null } = {}) {
+/** One edition may hold at most PAGE_MAX_UPLOAD_MB of uploaded files in total. */
+async function checkEditionLimit(editionId, newBytes, exceptPageId = 0) {
+  const limit = config.upload.pageMaxBytes;
+  const used = await editionUploadBytes(editionId, exceptPageId);
+  if (used + newBytes <= limit) return;
+  const mb = (n) => (n / 1048576).toFixed(1);
+  throw ApiError.badRequest(`This edition already has ${mb(used)} MB uploaded. Adding ${mb(newBytes)} MB would make ${mb(used + newBytes)} MB, but the limit is ${Math.round(limit / 1048576)} MB per edition. Delete or replace pages, or upload smaller files.`);
+}
+
+async function storePageImage(conn, editionId, filePath, originalName, { pageId = null, pageNumber = null, pdfPage = null, uploadBytes = null } = {}) {
   // PDF pages: keep the small vector page as the original; build web images from its render
   const orig = pdfPage ? await images.saveOriginalPdf(pdfPage, editionId, filePath) : await images.saveOriginal(filePath, editionId, originalName);
   const variants = await images.buildVariants(pdfPage ? filePath : images.absOriginal(orig.path), editionId, null, { fromPdf: !!pdfPage });
   if (variants.large) require('../services/pageSizes').warm(images.absUpload(variants.large.path));
   let id = pageId;
   if (!id) {
-    const [r] = await conn.query('INSERT INTO edition_pages (edition_id, page_number, title, original_name, width, height) VALUES (?,?,?,?,?,?)',
-      [editionId, pageNumber, `Page ${pageNumber}`, String(originalName).slice(0, 250), orig.width, orig.height]);
+    const [r] = await conn.query('INSERT INTO edition_pages (edition_id, page_number, title, original_name, upload_bytes, width, height) VALUES (?,?,?,?,?,?,?)',
+      [editionId, pageNumber, `Page ${pageNumber}`, String(originalName).slice(0, 250), uploadBytes, orig.width, orig.height]);
     id = r.insertId;
   } else {
     // remove previous files
     const [old] = await conn.query('SELECT variant, path FROM page_images WHERE page_id=?', [id]);
     for (const o of old) images.safeUnlink(o.variant === 'original' ? images.absOriginal(o.path) : images.absUpload(o.path));
     await conn.query('DELETE FROM page_images WHERE page_id=?', [id]);
-    await conn.query('UPDATE edition_pages SET original_name=?, width=?, height=? WHERE id=?', [String(originalName).slice(0, 250), orig.width, orig.height, id]);
+    await conn.query('UPDATE edition_pages SET original_name=?, upload_bytes=?, width=?, height=? WHERE id=?', [String(originalName).slice(0, 250), uploadBytes, orig.width, orig.height, id]);
   }
   for (const [variant, v] of Object.entries({ original: orig, ...variants })) {
     await conn.query('INSERT INTO page_images (page_id, variant, path, mime, width, height, size_bytes, is_watermarked) VALUES (?,?,?,?,?,?,?,?)',
@@ -57,6 +67,7 @@ const upload = asyncHandler(async (req, res) => {
     const ed = await getEdition(req.params.editionId);
     const files = (req.files || []).slice().sort(natural);
     if (!files.length) throw ApiError.badRequest('Select at least one page image to upload');
+    await checkEditionLimit(ed.id, files.reduce((a, f) => a + f.size, 0));
     const s = await settings.getGroup('website_settings');
     // Expand PDFs into page images
     const queue = [];
@@ -66,10 +77,10 @@ const upload = asyncHandler(async (req, res) => {
         const pngs = await images.pdfToImages(f.path);
         tmpExtra.push(...pngs);
         const parts = await images.splitPdf(f.path).catch(() => []);
-        pngs.forEach((p, i) => queue.push({ path: p, name: `${path.basename(f.originalname, '.pdf')}-p${i + 1}.${parts[i] ? 'pdf' : 'png'}`, pdfPage: parts[i] || null }));
+        pngs.forEach((p, i) => queue.push({ path: p, name: `${path.basename(f.originalname, '.pdf')}-p${i + 1}.${parts[i] ? 'pdf' : 'png'}`, pdfPage: parts[i] || null, bytes: Math.round(f.size / pngs.length) }));
       } else {
         await images.assertImage(f.path);
-        queue.push({ path: f.path, name: f.originalname });
+        queue.push({ path: f.path, name: f.originalname, bytes: f.size });
       }
     }
     const created = [];
@@ -79,7 +90,7 @@ const upload = asyncHandler(async (req, res) => {
       const conn = await pool.getConnection();
       try {
         await conn.beginTransaction();
-        const id = await storePageImage(conn, ed.id, item.path, item.name, { pageNumber: ++n, pdfPage: item.pdfPage });
+        const id = await storePageImage(conn, ed.id, item.path, item.name, { pageNumber: ++n, pdfPage: item.pdfPage, uploadBytes: item.bytes });
         await conn.commit();
         created.push(id);
       } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
@@ -100,6 +111,7 @@ const replace = asyncHandler(async (req, res) => {
     const page = await one('SELECT * FROM edition_pages WHERE id=?', [req.params.pageId]);
     if (!page) throw ApiError.notFound('Page not found');
     if (!req.file) throw ApiError.badRequest('Select an image to replace this page');
+    await checkEditionLimit(page.edition_id, req.file.size, page.id);
     let src = req.file.path; let pdfPage = null;
     if (req.file.mimetype === 'application/pdf') {
       const pngs = await images.pdfToImages(req.file.path);
@@ -107,7 +119,7 @@ const replace = asyncHandler(async (req, res) => {
       src = pngs[0];
       pdfPage = (await images.splitPdf(req.file.path).catch(() => []))[0] || null;
     }
-    await transaction((conn) => storePageImage(conn, page.edition_id, src, req.file.originalname, { pageId: page.id, pdfPage }));
+    await transaction((conn) => storePageImage(conn, page.edition_id, src, req.file.originalname, { pageId: page.id, pdfPage, uploadBytes: req.file.size }));
     await audit(req, 'page.replaced', 'page', page.id, { edition_id: page.edition_id });
     cache.invalidate('public:');
     ok(res, await pagesWithImages(page.edition_id), 'Page replaced successfully');
