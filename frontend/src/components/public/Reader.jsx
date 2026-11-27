@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import PageViewer from './PageViewer';
@@ -51,6 +51,11 @@ export default function Reader({ edition, pageNumber = 1, basePath, highlight })
 
   const pages = edition.pages || [];
   const total = pages.length;
+  // Every mapped article in the edition, in reading order (page by page), for prev/next in the popup
+  const articles = useMemo(() => pages.flatMap((p, pi) => (p.areas || []).filter((ar) => !ar.link_url).map((ar) => ({ ar, pi }))), [pages]);
+  const articlePos = article ? articles.findIndex((x) => x.ar.id === article.id) : -1;
+  const articlePi = articlePos >= 0 ? articles[articlePos].pi : null;
+  const articleSel = useMemo(() => (article ? { x: article.x, y: article.y, w: article.w, h: article.h } : null), [article]);
   const index = Math.min(Math.max(1, pageNumber), Math.max(1, total)) - 1;
   const page = pages[index];
   const img = page?.images?.large || page?.images?.medium || {};
@@ -69,6 +74,14 @@ export default function Reader({ edition, pageNumber = 1, basePath, highlight })
     setCrop(false);
     navigate(basePath && n === 1 ? basePath : pageUrl(n));
   }, [total, index, navigate, basePath]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Open the article at position i of the edition's article list (turns the page behind it too). */
+  const openArticleAt = useCallback((i) => {
+    const it = articles[i];
+    if (!it) return;
+    setArticle(it.ar);
+    if (it.pi !== index) go(it.pi + 1);
+  }, [articles, index, go]);
 
   // ?article=<id> reopens an article popup (e.g. after "Login to Comment")
   const [searchParams, setSearchParams] = useSearchParams();
@@ -108,6 +121,11 @@ export default function Reader({ edition, pageNumber = 1, basePath, highlight })
   useEffect(() => {
     const onKey = (e) => {
       if (/input|textarea|select/i.test(e.target.tagName) || e.target.isContentEditable) return;
+      if (article) { // article popup open: arrows move between articles
+        if (e.key === 'ArrowRight' && articlePos < articles.length - 1) { e.preventDefault(); openArticleAt(articlePos + 1); }
+        else if (e.key === 'ArrowLeft' && articlePos > 0) { e.preventDefault(); openArticleAt(articlePos - 1); }
+        return;
+      }
       if (e.key === 'ArrowRight') { e.preventDefault(); go(index + 2); }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); go(index); }
       else if (e.key === 'Home') go(1);
@@ -119,7 +137,7 @@ export default function Reader({ edition, pageNumber = 1, basePath, highlight })
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [go, index, total, crop]);
+  }, [go, index, total, crop, article, articlePos, articles, openArticleAt]);
 
   useEffect(() => {
     const h = () => setFullscreen(!!document.fullscreenElement);
@@ -270,7 +288,13 @@ export default function Reader({ edition, pageNumber = 1, basePath, highlight })
         <div className="py-4 pb-5"><LatestEditions exclude={edition.slug} /></div>
       </div>
 
-      {article && <CropPreviewModal show onClose={() => setArticle(null)} page={page} selection={{ x: article.x, y: article.y, w: article.w, h: article.h }} edition={edition} title={article.title || `${t('page')} ${index + 1}`} description={article.description} area={article} />}
+      {article && <CropPreviewModal show onClose={() => setArticle(null)} page={articlePi != null ? pages[articlePi] : page} selection={articleSel} edition={edition}
+        title={article.title || `${t('page')} ${(articlePi ?? index) + 1}`} description={article.description} area={article}
+        nav={articlePos >= 0 && articles.length > 1 ? {
+          pos: articlePos + 1, total: articles.length,
+          onPrev: articlePos > 0 ? () => openArticleAt(articlePos - 1) : null,
+          onNext: articlePos < articles.length - 1 ? () => openArticleAt(articlePos + 1) : null,
+        } : null} />}
       {showCropPreview && <CropPreviewModal show onClose={() => setShowCropPreview(false)} page={page} selection={selection} edition={edition} />}
     </div>
   );

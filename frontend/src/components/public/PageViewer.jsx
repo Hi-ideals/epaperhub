@@ -118,7 +118,7 @@ const PageViewer = forwardRef(function PageViewer({ page, onPrev, onNext, cropMo
         ctx.save(); ctx.beginPath(); ctx.rect(v.x * dpr, v.y * dpr, base.w * v.s * dpr, base.h * v.s * dpr); ctx.clip();
         ctx.drawImage(off, 0, 0); ctx.restore();
         setDrawn({ ...v });
-      } catch { /* keep the picture */ }
+      } catch (e) { if (e?.name !== 'RenderingCancelledException') console.warn('[ePaper] sharp zoom unavailable, showing the image instead:', e?.message || e); }
     }, 140);
     return () => { alive = false; clearTimeout(t); job?.cancel(); };
   }, [vector, page?.pdf_url, view.s, view.x, view.y, size.w, size.h, base.w]); // eslint-disable-line react-hooks/exhaustive-deps

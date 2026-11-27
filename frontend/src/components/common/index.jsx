@@ -33,7 +33,7 @@ export function ErrorState({ error, onRetry }) {
   );
 }
 
-export function Modal({ show, onClose, title, children, footer, size = '', scrollable = true, fullscreenSm = false }) {
+export function Modal({ show, onClose, title, children, footer, size = '', scrollable = true, fullscreenSm = false, outside = null }) {
   useEffect(() => {
     if (!show) return undefined;
     const h = (e) => e.key === 'Escape' && onClose?.();
@@ -57,6 +57,7 @@ export function Modal({ show, onClose, title, children, footer, size = '', scrol
             {footer && <div className="modal-footer">{footer}</div>}
           </div>
         </div>
+        {outside}
       </div>
       <div className="modal-backdrop fade show" />
     </>,

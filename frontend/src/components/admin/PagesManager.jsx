@@ -8,6 +8,13 @@ import { post, put, del, download, mediaUrl } from '../../services/api';
 import { bytes } from '../../utils/format';
 
 /** Upload / reorder / replace / preview / edit / delete newspaper pages of one edition. */
+/** Shows whether the reader can zoom this page sharply (page kept as PDF) or only zooms the picture. */
+function ZoomBadge({ pg }) {
+  if (pg.pdf_url && !pg.images?.large?.watermarked) return <span className="zoom-badge ok" title="Uploaded as PDF – text stays sharp at any zoom on the website"><i className="bi bi-zoom-in" />Sharp zoom</span>;
+  if (pg.pdf_url) return <span className="zoom-badge off" title="The watermark is on, so the website zooms the watermarked picture"><i className="bi bi-droplet-half" />Watermark – picture zoom</span>;
+  return <span className="zoom-badge off" title="Uploaded as an image (or before sharp zoom existed). Replace it with the PDF page for sharp zoom."><i className="bi bi-image" />Picture zoom</span>;
+}
+
 export default function PagesManager({ editionId, pages, onChange }) {
   const { can } = useAuth();
   const { site } = useSettings();
@@ -166,7 +173,8 @@ export default function PagesManager({ editionId, pages, onChange }) {
                   {!pg.is_visible && <span className="badge text-bg-dark position-absolute" style={{ top: 6, right: 6 }}>Hidden</span>}
                   {pg.images.large?.watermarked && <span className="badge text-bg-info position-absolute" style={{ bottom: 6, right: 6 }} title="Watermarked"><i className="bi bi-droplet-half" /></span>}
                 </div>
-                <div className="meta"><div className="text-truncate fw-semibold">{pg.title || `Page ${pg.page_number}`}</div><div className="text-muted text-truncate">{pg.width}×{pg.height}</div></div>
+                <div className="meta"><div className="text-truncate fw-semibold">{pg.title || `Page ${pg.page_number}`}</div><div className="text-muted text-truncate">{pg.width}×{pg.height}</div>
+                  <ZoomBadge pg={pg} /></div>
                 <div className="acts">
                   {can('pages.edit') && <button title="Move left" onClick={() => move(pg, -1)} disabled={i === 0}><i className="bi bi-arrow-left" /></button>}
                   {can('pages.edit') && <button title="Edit details" onClick={() => setEditing({ ...pg })}><i className="bi bi-pencil" /></button>}
@@ -189,7 +197,7 @@ export default function PagesManager({ editionId, pages, onChange }) {
           <button className="btn btn-light" disabled={preview === pages.length - 1} onClick={() => setPreview(preview + 1)}>Next <i className="bi bi-chevron-right" /></button>
         </>}>
         {p && <div className="text-center bg-light p-2 rounded"><img src={mediaUrl(p.images.large?.url || p.images.medium?.url)} alt="" style={{ maxWidth: '100%', maxHeight: '70vh' }} /></div>}
-        {p && <div className="small text-muted mt-2">Original: {p.original_name} · {p.width}×{p.height}px · Large: {p.images.large?.width}px ({bytes(p.images.large?.size)}) · Medium: {p.images.medium?.width}px · Thumb: {p.images.thumb?.width}px</div>}
+        {p && <div className="small text-muted mt-2"><ZoomBadge pg={p} /> Original: {p.original_name} · {p.width}×{p.height}px · Large: {p.images.large?.width}px ({bytes(p.images.large?.size)}) · Medium: {p.images.medium?.width}px · Thumb: {p.images.thumb?.width}px</div>}
       </Modal>
 
       <Modal show={!!editing} onClose={() => setEditing(null)} title={editing ? `Edit page ${editing.page_number}` : ''}

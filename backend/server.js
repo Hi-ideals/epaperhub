@@ -98,6 +98,9 @@ app.get('/robots.txt', forTenant(seoCtrl.robots, (req, res) => res.type('text/pl
 app.get('/sitemap.xml', forTenant(seoCtrl.sitemap));
 
 // Production: serve the React build with server-side SEO meta
+// Sharp (vector) zoom needs pdf-lib to keep each PDF page as a small PDF
+try { require.resolve('pdf-lib'); } catch { console.warn('⚠ pdf-lib is not installed – PDF uploads will not get sharp zoom. Run "npm install" in the backend folder and restart.'); }
+
 const dist = config.paths.frontendDist;
 if (fs.existsSync(path.join(dist, 'index.html'))) {
   app.use(express.static(dist, { index: false, maxAge: '7d', setHeaders: (res, p) => { if (/sw\.js$|index\.html$/.test(p)) res.setHeader('Cache-Control', 'no-cache'); } }));

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Modal } from '../common';
+import { loadPdfPage } from './pdfZoom';
 import { useSettings } from '../../context/SettingsContext';
 import { post, mediaUrl } from '../../services/api';
 import Comments from './Comments';
@@ -133,14 +134,41 @@ export const siteDomain = (site) => { try { return new URL(site.site_url || wind
  * Cut the selected article out of the page and add a branded header:
  * big logo in the centre; small date on the left; small "Page no:N | website" on the right.
  */
+/**
+ * Draw the selected part of a PDF page straight from the vector page at high resolution
+ * (about 3000 px wide), so the article stays sharp when the reader zooms in.
+ */
+async function renderPdfCrop(page, selection) {
+  const pp = await loadPdfPage(page.pdf_url);
+  const unit = pp.getViewport({ scale: 1 });
+  const regionW = selection.w * unit.width; const regionH = selection.h * unit.height;
+  const MAX_PIXELS = 18e6; // keep memory sensible on phones
+  let targetW = Math.min(3200, Math.sqrt(MAX_PIXELS * (regionW / regionH)));
+  targetW = Math.max(targetW, Math.min(1600, regionW * 4));
+  const scale = targetW / regionW;
+  const vp = pp.getViewport({ scale, offsetX: -selection.x * unit.width * scale, offsetY: -selection.y * unit.height * scale });
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(regionW * scale)); c.height = Math.max(1, Math.round(regionH * scale));
+  await pp.render({ canvasContext: c.getContext('2d'), canvas: c, viewport: vp, background: '#ffffff' }).promise;
+  return c;
+}
+
 export async function buildBrandedClip({ page, selection, edition, site }) {
-  const im = await loadImg(mediaUrl(page.images.large?.url || page.images.medium?.url));
-  const sx = selection.x * im.naturalWidth; const sy = selection.y * im.naturalHeight;
-  const cw = Math.max(1, Math.round(selection.w * im.naturalWidth)); const ch = Math.max(1, Math.round(selection.h * im.naturalHeight));
+  // Pages kept as PDF: render the article from the vector page (sharp). Otherwise crop the page picture.
+  let im = null;
+  if (page.pdf_url && !page.images?.large?.watermarked) {
+    try { im = await renderPdfCrop(page, selection); } catch (e) { console.warn('[ePaper] sharp article preview unavailable:', e?.message || e); }
+  }
+  let sx = 0; let sy = 0; let cw; let ch;
+  if (im) { cw = im.width; ch = im.height; } else {
+    im = await loadImg(mediaUrl(page.images.large?.url || page.images.medium?.url));
+    sx = selection.x * im.naturalWidth; sy = selection.y * im.naturalHeight;
+    cw = Math.max(1, Math.round(selection.w * im.naturalWidth)); ch = Math.max(1, Math.round(selection.h * im.naturalHeight));
+  }
   // Header: logo across ~70% of the width; a thin row below it with the date (left) and page + website (right)
   const W = Math.max(cw, 720);
   const pad = Math.round(W * 0.02);
-  const fs = Math.round(Math.min(24, Math.max(15, W * 0.016)));
+  const fs = Math.round(Math.max(15, W * 0.016));
   const logoSrc = site.header_logo || site.site_logo;
   let logo = null;
   if (logoSrc) { try { logo = trimImage(await loadImg(mediaUrl(logoSrc))); } catch { /* text instead */ } }
@@ -168,7 +196,7 @@ export async function buildBrandedClip({ page, selection, edition, site }) {
   // Divider + article
   g.fillStyle = '#d1d5db'; g.fillRect(0, H - 2, W, 2);
   g.drawImage(im, sx, sy, cw, ch, Math.round((W - cw) / 2), H, cw, ch);
-  return c.toDataURL('image/jpeg', 0.92);
+  return new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(URL.createObjectURL(b)) : reject(new Error('Could not build the clip'))), 'image/jpeg', 0.9));
 }
 
 /** Readable article viewer: fit-to-width by default, zoom buttons, Ctrl+wheel, double-click, drag to pan. */
@@ -245,7 +273,7 @@ function ZoomableImage({ src, alt }) {
   );
 }
 
-export function CropPreviewModal({ show, onClose, page, selection, edition, title, description, area }) {
+export function CropPreviewModal({ show, onClose, page, selection, edition, title, description, area, nav = null }) {
   const { t, site } = useSettings();
   const withComments = !!area && !!site.comments_enabled && !!edition?.comments_enabled;
   const isWide = useMediaQuery('(min-width: 992px)');
@@ -259,10 +287,11 @@ export function CropPreviewModal({ show, onClose, page, selection, edition, titl
     if (!show || !page || !selection) return;
     let alive = true;
     setClip(null); setPreview(null);
+    let made = null;
     buildBrandedClip({ page, selection, edition, site })
-      .then((url) => alive && setPreview(url))
+      .then((url) => { made = url; if (alive) setPreview(url); else URL.revokeObjectURL(url); })
       .catch(() => alive && setPreview('error'));
-    return () => { alive = false; };
+    return () => { alive = false; if (made) setTimeout(() => URL.revokeObjectURL(made), 60000); };
   }, [show, page, selection]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const createClip = async () => {
@@ -286,9 +315,19 @@ export function CropPreviewModal({ show, onClose, page, selection, edition, titl
   };
 
   return (
-    <Modal show={show} onClose={onClose} title={title ? <><i className="bi bi-newspaper me-2" />{title}</> : <><i className="bi bi-scissors me-2" />{t('crop')}</>} size="xl" fullscreenSm>
+    <Modal show={show} onClose={onClose} size="xl" fullscreenSm
+      title={<span className="d-inline-flex align-items-center flex-wrap gap-2">{title ? <><i className="bi bi-newspaper" />{title}</> : <><i className="bi bi-scissors" />{t('crop')}</>}
+        {nav && <span className="art-nav-mini">
+          <button type="button" onClick={nav.onPrev || undefined} disabled={!nav.onPrev} aria-label={t('previousArticle')}><i className="bi bi-chevron-left" /></button>
+          <span>{nav.pos} / {nav.total}</span>
+          <button type="button" onClick={nav.onNext || undefined} disabled={!nav.onNext} aria-label={t('nextArticle')}><i className="bi bi-chevron-right" /></button>
+        </span>}</span>}
+      outside={nav && <>
+        {nav.onPrev && <button type="button" className="art-nav art-nav-prev" onClick={nav.onPrev} title={`${t('previousArticle')} (←)`} aria-label={t('previousArticle')}><i className="bi bi-chevron-left" /></button>}
+        {nav.onNext && <button type="button" className="art-nav art-nav-next" onClick={nav.onNext} title={`${t('nextArticle')} (→)`} aria-label={t('nextArticle')}><i className="bi bi-chevron-right" /></button>}
+      </>}>
       <div className={withComments && showComments ? 'ac-layout' : ''}>
-        {withComments && showComments && <Comments variant="panel" edition={edition} page={page} area={area} onCount={setCommentCount} onClose={isWide ? () => setShowComments(false) : undefined} />}
+        {withComments && showComments && <Comments key={area?.id} variant="panel" edition={edition} page={page} area={area} onCount={setCommentCount} onClose={isWide ? () => setShowComments(false) : undefined} />}
         <div className="ac-main">
           {withComments && !showComments && (
             <button type="button" className="btn ac-open mb-2" onClick={() => setShowComments(true)}>

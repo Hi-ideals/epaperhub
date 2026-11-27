@@ -76,7 +76,7 @@ const upload = asyncHandler(async (req, res) => {
         if (!s.allow_pdf_upload) throw ApiError.badRequest('PDF upload is disabled in ePaper settings.');
         const pngs = await images.pdfToImages(f.path);
         tmpExtra.push(...pngs);
-        const parts = await images.splitPdf(f.path).catch(() => []);
+        const parts = await images.splitPdf(f.path).catch((e) => { console.warn(`[pages] Could not keep "${f.originalname}" as PDF pages (sharp zoom will be off): ${e.message}`); return []; });
         pngs.forEach((p, i) => queue.push({ path: p, name: `${path.basename(f.originalname, '.pdf')}-p${i + 1}.${parts[i] ? 'pdf' : 'png'}`, pdfPage: parts[i] || null, bytes: Math.round(f.size / pngs.length) }));
       } else {
         await images.assertImage(f.path);
@@ -117,7 +117,7 @@ const replace = asyncHandler(async (req, res) => {
       const pngs = await images.pdfToImages(req.file.path);
       tmpExtra.push(...pngs);
       src = pngs[0];
-      pdfPage = (await images.splitPdf(req.file.path).catch(() => []))[0] || null;
+      pdfPage = (await images.splitPdf(req.file.path).catch((e) => { console.warn(`[pages] Could not keep "${req.file.originalname}" as a PDF page (sharp zoom will be off): ${e.message}`); return []; }))[0] || null;
     }
     await transaction((conn) => storePageImage(conn, page.edition_id, src, req.file.originalname, { pageId: page.id, pdfPage, uploadBytes: req.file.size }));
     await audit(req, 'page.replaced', 'page', page.id, { edition_id: page.edition_id });

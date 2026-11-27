@@ -26,7 +26,13 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
       chunkSizeWarningLimit: 900,
-      rollupOptions: { output: { manualChunks: { vendor: ['react', 'react-dom', 'react-router-dom', 'axios'] } } },
+      rollupOptions: {
+        output: {
+          manualChunks: { vendor: ['react', 'react-dom', 'react-router-dom', 'axios'] },
+          // .mjs files (the PDF zoom worker) are saved as .js so every web server sends them as JavaScript
+          assetFileNames: (info) => (/\.mjs$/i.test(info.names?.[0] || info.name || '') ? 'assets/[name]-[hash].js' : 'assets/[name]-[hash][extname]'),
+        },
+      },
     },
   };
 });
